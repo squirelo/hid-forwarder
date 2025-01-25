@@ -10,8 +10,8 @@ const ESC_ESC = 0o335; /* ESC ESC_ESC means ESC data byte */
 document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("select_device").addEventListener("click", select_device);
     output = document.getElementById("output");
-    // setInterval(loop, 8);
-    loop();
+    setInterval(loop, 8);
+    // loop();
 });
 
 if (!("serial" in navigator)) {
@@ -186,7 +186,7 @@ async function loop() {
         console.log(e);
     }
 
-    requestAnimationFrame(loop);
+    // requestAnimationFrame(loop);
 }
 
 function write(s) {
