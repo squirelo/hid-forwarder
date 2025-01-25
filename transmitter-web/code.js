@@ -30,28 +30,35 @@ async function select_device() {
     await port.open({ baudRate: 921600 });
 }
 
-async function ser_write(c) {
-    const writer = port.writable?.getWriter();
-    if (writer) {
-        await writer.write(new Uint8Array([c]));
-        writer.releaseLock();
-    }
+let transmit_buffer = [];
+
+function ser_write(c) {
+    transmit_buffer.push(c);
 }
 
-async function send_escaped_byte(b) {
+async function flush() {
+    const writer = port.writable?.getWriter();
+    if (writer) {
+        await writer.write(new Uint8Array(transmit_buffer));
+        writer.releaseLock();
+    }
+    transmit_buffer = [];
+}
+
+function send_escaped_byte(b) {
     switch (b) {
         case END:
-            await ser_write(ESC);
-            await ser_write(ESC_END);
+            ser_write(ESC);
+            ser_write(ESC_END);
             break;
 
         case ESC:
-            await ser_write(ESC);
-            await ser_write(ESC_ESC);
+            ser_write(ESC);
+            ser_write(ESC_ESC);
             break;
 
         default:
-            await ser_write(b);
+            ser_write(b);
     }
 }
 
@@ -72,11 +79,12 @@ async function send_report(report) {
     data[14] = (crc >> 16) & 0xFF;
     data[15] = (crc >> 24) & 0xFF;
 
-    await ser_write(END);
+    ser_write(END);
     for (let i = 0; i < 16; i++) {
-        await send_escaped_byte(data[i]);
+        send_escaped_byte(data[i]);
     }
-    await ser_write(END);
+    ser_write(END);
+    await flush();
 }
 
 async function loop() {

@@ -13,9 +13,14 @@ ESC_ESC = 0o335  # ESC ESC_ESC means ESC data byte
 class SerialTransmitter:
     def __init__(self, device):
         self.ser = serial.Serial(device, BAUDRATE)
+        self.buffer = bytes()
 
     def send_raw_byte(self, b):
-        self.ser.write(bytes((b,)))
+        self.buffer += bytes((b,))
+
+    def flush(self):
+        self.ser.write(self.buffer)
+        self.buffer = bytes()
 
     def send_escaped_byte(self, b):
         if b == END:
@@ -35,3 +40,4 @@ class SerialTransmitter:
         for i in range(4):
             self.send_escaped_byte((crc >> (i * 8)) & 0xFF)
         self.send_raw_byte(END)
+        self.flush()
