@@ -1,9 +1,12 @@
 import crc32 from './crc.js';
 
-const CONFIG_VERSION = 1;
-const CONFIG_SIZE = 64;
-const VENDOR_ID = 0xCAFE;
-const PRODUCT_ID = 0xBAF5;
+const CONFIG_VERSION = 2;
+const CONFIG_SIZE = 63;
+const REPORT_ID_CONFIG = 1;
+const REPORT_ID_COMMAND = 2;
+const COMMAND_PAIR_NEW_DEVICE = 1;
+const COMMAND_FORGET_ALL_DEVICES = 2;
+const BLUETOOTH_ENABLED_FLAG_MASK = (1 << 0);
 
 let device = null;
 
@@ -11,6 +14,8 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("open_device").addEventListener("click", open_device);
     document.getElementById("load_from_device").addEventListener("click", load_from_device);
     document.getElementById("save_to_device").addEventListener("click", save_to_device);
+    document.getElementById("pair_new_device").addEventListener("click", pair_new_device);
+    document.getElementById("forget_all_devices").addEventListener("click", forget_all_devices);
 
     device_buttons_set_disabled_state(true);
 
@@ -50,7 +55,8 @@ async function load_from_device() {
     clear_error();
 
     try {
-        const data = await device.receiveFeatureReport(0);
+        const data_with_report_id = await device.receiveFeatureReport(REPORT_ID_CONFIG);
+        const data = new DataView(data_with_report_id.buffer, 1);
         // console.log(data);
         check_crc(data);
         let pos = 0;
@@ -62,7 +68,7 @@ async function load_from_device() {
 
         let ssid = '';
         for (let i = 0; i < 20; i++) {
-            const c = data.getUint8(pos+i);
+            const c = data.getUint8(pos + i);
             if (c == 0) {
                 break;
             }
@@ -73,6 +79,9 @@ async function load_from_device() {
 
         pos += 24;
         document.getElementById("wifi_password_input").value = '';
+
+        const flags = data.getUint8(pos++);
+        document.getElementById("bluetooth_enabled_checkbox").checked = ((flags & BLUETOOTH_ENABLED_FLAG_MASK) != 0);
     } catch (e) {
         display_error(e);
     }
@@ -109,7 +118,10 @@ async function save_to_device() {
             dataview.setUint8(pos++, isNaN(c) ? 0 : c);
         }
 
-        for (let i = 0; i < 14; i++) {
+        const flags = document.getElementById("bluetooth_enabled_checkbox").checked ? BLUETOOTH_ENABLED_FLAG_MASK : 0;
+        dataview.setUint8(pos++, flags);
+
+        for (let i = 0; i < 12; i++) {
             dataview.setUint8(pos++, 0);
         }
 
@@ -117,7 +129,7 @@ async function save_to_device() {
 
         // console.log(buffer);
 
-        await device.sendFeatureReport(0, buffer);
+        await device.sendFeatureReport(REPORT_ID_CONFIG, buffer);
 
     } catch (e) {
         display_error(e);
@@ -127,7 +139,7 @@ async function save_to_device() {
 function get_int(element_id, description) {
     const value = parseInt(document.getElementById(element_id).value, 10);
     if (isNaN(value)) {
-        throw new Error("Invalid "+description+".");
+        throw new Error("Invalid " + description + ".");
     }
     return value;
 }
@@ -167,4 +179,23 @@ function hid_on_disconnect(event) {
 function device_buttons_set_disabled_state(state) {
     document.getElementById("load_from_device").disabled = state;
     document.getElementById("save_to_device").disabled = state;
+    document.getElementById("pair_new_device").disabled = state;
+    document.getElementById("forget_all_devices").disabled = state;
+}
+
+async function send_feature_command(command) {
+    let buffer = new ArrayBuffer(CONFIG_SIZE);
+    let dataview = new DataView(buffer);
+    dataview.setUint8(0, CONFIG_VERSION);
+    dataview.setUint8(1, command);
+    add_crc(dataview);
+    await device.sendFeatureReport(REPORT_ID_COMMAND, buffer);
+}
+
+async function pair_new_device() {
+    await send_feature_command(COMMAND_PAIR_NEW_DEVICE);
+}
+
+async function forget_all_devices() {
+    await send_feature_command(COMMAND_FORGET_ALL_DEVICES);
 }

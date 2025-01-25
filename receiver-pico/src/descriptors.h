@@ -3,4 +3,7 @@
 
 #define NOUR_DESCRIPTORS 6
 
+#define REPORT_ID_CONFIG 1
+#define REPORT_ID_COMMAND 2
+
 #endif

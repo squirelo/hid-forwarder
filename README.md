@@ -8,13 +8,13 @@ The idea is that the PC can generate the inputs using methods like eye tracking,
 
 ![System architecture diagram](img/hid-forwarder.png)
 
-There are currently two protocols for communication between the transmitter and the receiver: networked (wifi) and wired (serial). Additional ones like Bluetooth might be added in the future.
+There are currently three protocols for communication between the transmitter and the receiver: networked (wifi), Bluetooth, and wired (serial).
 
 ## Receivers
 
-The receiver can either be a Raspberry Pi Pico running the [receiver_pico.uf2](receiver-pico/receiver_pico.uf2) firmware or a Pico W running the [receiver_pico_w.uf2](receiver-pico/receiver_pico_w.uf2) firmware. The Pico variant supports wired (serial) communication with the transmitter and the Pico W variant supports both wired and wireless (wifi) communication.
+The receiver can either be a Raspberry Pi Pico running the [receiver_pico.uf2](receiver-pico/receiver_pico.uf2) firmware or a Pico W running the [receiver_pico_w.uf2](receiver-pico/receiver_pico_w.uf2) firmware. The Pico variant supports wired (serial) communication with the transmitter and the Pico W variant supports both wired and wireless (wifi and Bluetooth) communication.
 
-To configure the wifi network on the wireless receiver, use this web based [configuration tool](https://www.jfedor.org/hid-receiver-config/).
+To configure the wifi on the wireless receiver or to enable Bluetooth and pair with a transmitter PC, use this web based [configuration tool](https://www.jfedor.org/hid-receiver-config/).
 
 The input device type that the receiver is emulating (mouse, keyboard, gamepad) can also be configured using this tool, but the receiver will also switch and remember the device type if it receives inputs for a different device type than it's currently configured to emulate.
 
@@ -34,6 +34,20 @@ The networked mode of communication uses UDP packets and currently has no acknow
 
 It currently has no encryption or authentication so it's susceptible to **eavesdropping** and **input injection**. _Make sure you understand the implications._
 
+## Bluetooth
+
+Bluetooth is disabled by default, you need to enable it using the [web configuration tool](https://www.jfedor.org/hid-receiver-config/). Then unplug and replug the receiver, open it again in the configuration tool and click the "Pair new device" button to pair it with the transmitter PC. The procedure on the computer side will depend on your operating system, but it will be the same as with other Bluetooth devices. The LED on the receiver Pico will blink while it is in Bluetooth pairing mode.
+
+The system uses Bluetooth serial for communication so the transmitter part is the same as with the wired serial option, you just need to provide the right serial port name.
+
+On Linux you might have to do something like this to create the device for the serial port:
+```
+rfcomm bind /dev/rfcomm0 xx:xx:xx:xx:xx:xx
+```
+Where `xx:xx:xx:xx:xx:xx` is your receiver's Bluetooth address and `/dev/rfcomm0` is the serial device name that will be created.
+
+Please note that while Bluetooth does in theory provide encryption and authentication because we're only talking to previously paired peers, I make no claims regarding real world security of this configuration.
+
 ## Transmitters
 
 A few sample transmitters are provided. Some of them generate synthetic inputs and some capture inputs from a gamepad connected to your PC and forward them to the receiver. You might want to use one approach or the other, depending on what you're using to generate the inputs.
@@ -42,17 +56,17 @@ If during testing you connect the receiver to the same PC that's running the tra
 
 ### Web transmitter
 
-This is a web application, you can see a live version of it [here](https://www.jfedor.org/hid-transmitter/). It is only compatible with the wired mode of communication to the receiver. Click the "Select serial port" button, choose the port corresponding to your USB-to-serial adapter and then it should forward the inputs from any connected gamepads to the receiver.
+This is a web application, you can see a live version of it [here](https://www.jfedor.org/hid-transmitter/). It is compatible with the wired and Bluetooth modes of communication to the receiver. Click the "Select serial port" button, choose the port corresponding to your USB-to-serial adapter or your Bluetooth serial connection and then it should forward the inputs from any connected gamepads to the receiver.
 
 ### Python transmitters
 
 Two gamepad transmitters written in Python are provided. `gamepad_test.py` generates synthetic inputs and `gamepad_forward.py` captures inputs from any connected gamepad and forwards them to the receiver.
 
-To use the transmitters in wired mode, use the `--serial-port` command line parameter with the device name of you USB-to-serial adapter. Depending on your operating system and the adapter you're using, it will be something like `COM3` or `/dev/ttyACM0`.
+To use the transmitters in wired or Bluetooth mode, use the `--serial-port` command line parameter with the device name of your USB-to-serial adapter or your Bluetooth serial port. Depending on your operating system and the adapter you're using, it will be something like `COM3` or `/dev/ttyACM0`.
 
 To use the transmitters in networked mode, use the `--address` command line parameter with the IP address of the receiver. There's currently no way to ask the receiver what IP address it got via DHCP so check on your access point or router.
 
-To use the serial mode of communication you need to have the [pyserial](https://github.com/pyserial/pyserial) module installed. To use the `gamepad_forward.py` transmitter, you need [pyglet](https://pyglet.org/). Both can be installed with pip.
+To use the serial modes of communication you need to have the [pyserial](https://github.com/pyserial/pyserial) module installed. To use the `gamepad_forward.py` transmitter, you need [pyglet](https://pyglet.org/). Both can be installed with pip.
 
 ## Console compatibility
 

@@ -15,9 +15,15 @@
 #ifdef NETWORK_ENABLED
 #include "lwip/pbuf.h"
 #include "lwip/udp.h"
+#endif
+
+#if (defined(NETWORK_ENABLED) || defined(BLUETOOTH_ENABLED))
 #include "pico/cyw43_arch.h"
 #endif
 
+#include "receiver.h"
+
+#include "bt.h"
 #include "crc.h"
 #include "descriptors.h"
 #include "globals.h"
@@ -30,7 +36,7 @@
 #define OUR_PORT 42734
 #endif
 
-#define CONFIG_VERSION 1
+#define CONFIG_VERSION 2
 #define PROTOCOL_VERSION 1
 
 #define SERIAL_UART uart1
@@ -39,18 +45,31 @@
 #define SERIAL_RX_PIN 5
 #define SERIAL_MAX_PACKET_SIZE 512
 
-typedef void (*msg_recv_cb_t)(const uint8_t* data, uint16_t len);
+#define COMMAND_PAIR_NEW_DEVICE 1
+#define COMMAND_FORGET_ALL_DEVICES 2
+
+#define BLUETOOTH_ENABLED_FLAG_MASK (1 << 0)
 
 typedef struct __attribute__((packed)) {
     uint8_t config_version;
     uint8_t our_descriptor_number;
     char wifi_ssid[20];
     char wifi_password[24];
-    uint8_t reserved[14];
+    uint8_t flags;
+    uint8_t reserved[12];
     uint32_t crc;
 } config_t;
 
-_Static_assert(sizeof(config_t) == 64);
+_Static_assert(sizeof(config_t) == 63);
+
+typedef struct __attribute__((packed)) {
+    uint8_t config_version;
+    uint8_t command;
+    uint8_t reserved[57];
+    uint32_t crc;
+} command_t;
+
+_Static_assert(sizeof(command_t) == 63);
 
 typedef struct __attribute__((packed)) {
     uint8_t protocol_version;
@@ -141,6 +160,75 @@ void handle_received_packet(const uint8_t* data, uint16_t len) {
     }
 }
 
+void serial_init() {
+    uart_init(SERIAL_UART, SERIAL_BAUDRATE);
+    uart_set_translate_crlf(SERIAL_UART, false);
+    gpio_set_function(SERIAL_TX_PIN, GPIO_FUNC_UART);
+    gpio_set_function(SERIAL_RX_PIN, GPIO_FUNC_UART);
+}
+
+#define END 0300     /* indicates end of packet */
+#define ESC 0333     /* indicates byte stuffing */
+#define ESC_END 0334 /* ESC ESC_END means END data byte */
+#define ESC_ESC 0335 /* ESC ESC_ESC means ESC data byte */
+
+void serial_read_byte(uint8_t c, uint8_t port) {
+    static uint8_t buffer[2][SERIAL_MAX_PACKET_SIZE];
+    static uint16_t bytes_read[2] = { 0, 0 };
+    static bool escaped[2] = { false, false };
+
+    bytes_read[port] %= sizeof(buffer);
+
+    if (escaped[port]) {
+        switch (c) {
+            case ESC_END:
+                buffer[port][bytes_read[port]++] = END;
+                break;
+            case ESC_ESC:
+                buffer[port][bytes_read[port]++] = ESC;
+                break;
+            default:
+                // this shouldn't happen
+                buffer[port][bytes_read[port]++] = c;
+                break;
+        }
+        escaped[port] = false;
+    } else {
+        switch (c) {
+            case END:
+                if (bytes_read[port] > 4) {
+                    uint32_t crc = crc32(buffer[port], bytes_read[port] - 4);
+                    uint32_t received_crc = 0;
+                    for (int i = 0; i < 4; i++) {
+                        received_crc = (received_crc << 8) | buffer[port][bytes_read[port] - 1 - i];
+                    }
+                    if (crc == received_crc) {
+                        handle_received_packet(buffer[port], bytes_read[port] - 4);
+                        bytes_read[port] = 0;
+                        return;
+                    } else {
+                        printf("CRC error\n");
+                    }
+                }
+                bytes_read[port] = 0;
+                break;
+            case ESC:
+                escaped[port] = true;
+                break;
+            default:
+                buffer[port][bytes_read[port]++] = c;
+                break;
+        }
+    }
+}
+
+void serial_task() {
+    while (uart_is_readable(SERIAL_UART)) {
+        char c = uart_getc(SERIAL_UART);
+        serial_read_byte(c, 0);
+    }
+}
+
 #ifdef NETWORK_ENABLED
 
 void net_recv(void* arg, struct udp_pcb* pcb, struct pbuf* p, const ip_addr_t* addr, u16_t port) {
@@ -149,7 +237,6 @@ void net_recv(void* arg, struct udp_pcb* pcb, struct pbuf* p, const ip_addr_t* a
 }
 
 void net_init() {
-    cyw43_arch_init();
     cyw43_arch_enable_sta_mode();
     if (strlen(config.wifi_ssid) > 0) {
         cyw43_arch_wifi_connect_async(config.wifi_ssid, config.wifi_password, CYW43_AUTH_WPA2_AES_PSK);
@@ -166,81 +253,21 @@ void net_task() {
 
 #endif
 
-void serial_init() {
-    uart_init(SERIAL_UART, SERIAL_BAUDRATE);
-    uart_set_translate_crlf(SERIAL_UART, false);
-    gpio_set_function(SERIAL_TX_PIN, GPIO_FUNC_UART);
-    gpio_set_function(SERIAL_RX_PIN, GPIO_FUNC_UART);
-}
-
-#define END 0300     /* indicates end of packet */
-#define ESC 0333     /* indicates byte stuffing */
-#define ESC_END 0334 /* ESC ESC_END means END data byte */
-#define ESC_ESC 0335 /* ESC ESC_ESC means ESC data byte */
-
-void serial_read(msg_recv_cb_t callback) {
-    static uint8_t buffer[SERIAL_MAX_PACKET_SIZE];
-    static uint16_t bytes_read = 0;
-    static bool escaped = false;
-
-    while (uart_is_readable(SERIAL_UART)) {
-        bytes_read %= sizeof(buffer);
-
-        char c = uart_getc(SERIAL_UART);
-
-        if (escaped) {
-            switch (c) {
-                case ESC_END:
-                    buffer[bytes_read++] = END;
-                    break;
-                case ESC_ESC:
-                    buffer[bytes_read++] = ESC;
-                    break;
-                default:
-                    // this shouldn't happen
-                    buffer[bytes_read++] = c;
-                    break;
-            }
-            escaped = false;
-        } else {
-            switch (c) {
-                case END:
-                    if (bytes_read > 4) {
-                        uint32_t crc = crc32(buffer, bytes_read - 4);
-                        uint32_t received_crc = 0;
-                        for (int i = 0; i < 4; i++) {
-                            received_crc = (received_crc << 8) | buffer[bytes_read - 1 - i];
-                        }
-                        if (crc == received_crc) {
-                            callback(buffer, bytes_read - 4);
-                            bytes_read = 0;
-                            return;
-                        } else {
-                            printf("CRC error\n");
-                        }
-                    }
-                    bytes_read = 0;
-                    break;
-                case ESC:
-                    escaped = true;
-                    break;
-                default:
-                    buffer[bytes_read++] = c;
-                    break;
-            }
-        }
-    }
-}
-
-void serial_task() {
-    serial_read(handle_received_packet);
-}
-
 bool config_ok(config_t* c) {
     if (crc32((uint8_t*) c, sizeof(config_t) - 4) != c->crc) {
         return false;
     }
     if (c->config_version != CONFIG_VERSION) {
+        return false;
+    }
+    return true;
+}
+
+bool command_ok(command_t* command) {
+    if (crc32((uint8_t*) command, sizeof(command_t) - 4) != command->crc) {
+        return false;
+    }
+    if (command->config_version != CONFIG_VERSION) {
         return false;
     }
     return true;
@@ -273,20 +300,52 @@ uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t
 
 void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t const* buffer, uint16_t bufsize) {
     if (itf == 1) {
-        if (bufsize != sizeof(config_t)) {
-            return;
+        switch (report_id) {
+            case REPORT_ID_CONFIG:
+                if (bufsize != sizeof(config_t)) {
+                    return;
+                }
+                if (!config_ok((config_t*) buffer)) {
+                    return;
+                }
+                memcpy(&config, buffer, bufsize);
+                config.wifi_ssid[sizeof(config.wifi_ssid) - 1] = 0;
+                config.wifi_password[sizeof(config.wifi_password) - 1] = 0;
+                if ((strlen(config.wifi_password) == 0) &&
+                    config_ok((config_t*) FLASH_CONFIG_IN_MEMORY)) {
+                    memcpy(config.wifi_password, ((config_t*) FLASH_CONFIG_IN_MEMORY)->wifi_password, sizeof(config.wifi_password));
+                }
+                persist_config();
+                break;
+            case REPORT_ID_COMMAND:
+                if (bufsize != sizeof(command_t)) {
+                    return;
+                }
+                command_t* command = (command_t*) buffer;
+                if (!command_ok(command)) {
+                    return;
+                }
+                printf("command: %d\n", command->command);
+                switch (command->command) {
+                    case COMMAND_PAIR_NEW_DEVICE:
+#ifdef BLUETOOTH_ENABLED
+                        bt_set_pairing_mode(true);
+#endif
+                        break;
+                    case COMMAND_FORGET_ALL_DEVICES:
+#ifdef BLUETOOTH_ENABLED
+                        bt_forget_all_devices();
+#endif
+                        break;
+                    default:
+                        printf("unknown command\n");
+                        break;
+                }
+                break;
+            default:
+                printf("unknown report ID\n");
+                break;
         }
-        if (!config_ok((config_t*) buffer)) {
-            return;
-        }
-        memcpy(&config, buffer, bufsize);
-        config.wifi_ssid[sizeof(config.wifi_ssid) - 1] = 0;
-        config.wifi_password[sizeof(config.wifi_password) - 1] = 0;
-        if ((strlen(config.wifi_password) == 0) &&
-            config_ok((config_t*) FLASH_CONFIG_IN_MEMORY)) {
-            memcpy(config.wifi_password, ((config_t*) FLASH_CONFIG_IN_MEMORY)->wifi_password, sizeof(config.wifi_password));
-        }
-        persist_config();
     }
 }
 
@@ -300,17 +359,41 @@ int main(void) {
         our_descriptor_number = 0;
     }
     serial_init();
+#if (defined(NETWORK_ENABLED) || defined(BLUETOOTH_ENABLED))
+    cyw43_arch_init();
+#endif
 #ifdef NETWORK_ENABLED
     net_init();
+#endif
+#ifdef BLUETOOTH_ENABLED
+    if (config.flags & BLUETOOTH_ENABLED_FLAG_MASK) {
+        bt_init();
+    }
 #endif
     tusb_init();
 
     while (true) {
         tud_task();
-#ifdef NETWORK_ENABLED
+#if (defined(NETWORK_ENABLED) || defined(BLUETOOTH_ENABLED))
         cyw43_arch_poll();
+#endif
+#ifdef NETWORK_ENABLED
         net_task();
-        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, wifi_connected);
+#endif
+#if (defined(NETWORK_ENABLED) || defined(BLUETOOTH_ENABLED))
+        bool led_on = false;
+#endif
+#ifdef NETWORK_ENABLED
+        led_on = led_on || wifi_connected;
+#endif
+#ifdef BLUETOOTH_ENABLED
+        led_on = led_on || bt_is_connected();
+        if (bt_get_pairing_mode()) {
+            led_on = (time_us_32() % 300000) > 150000;
+        }
+#endif
+#if (defined(NETWORK_ENABLED) || defined(BLUETOOTH_ENABLED))
+        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, led_on);
 #endif
         serial_task();
         if ((or_items > 0) && (tud_hid_n_ready(0))) {
