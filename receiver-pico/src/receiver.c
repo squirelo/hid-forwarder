@@ -135,7 +135,7 @@ void persist_config() {
 
 void handle_received_packet(const uint8_t* data, uint16_t len) {
     if (len < sizeof(packet_t)) {
-        printf("packet to small\n");
+        printf("packet too small\n");
         return;
     }
     packet_t* msg = (packet_t*) data;
@@ -153,11 +153,19 @@ void handle_received_packet(const uint8_t* data, uint16_t len) {
         persist_config();
         watchdog_reboot(0, 0, 0);
     }
+
+    // Send to both USB HID and BLE if connected
     if (tud_hid_n_ready(0)) {
         tud_hid_n_report(0, msg->report_id, msg->data, len);
     } else {
         queue_outgoing_report(msg->report_id, msg->data, len);
     }
+
+#ifdef BLUETOOTH_ENABLED
+    if (bt_is_connected()) {
+        bt_send_hid_report(msg->data, len);
+    }
+#endif
 }
 
 void serial_init() {
@@ -329,12 +337,16 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
                 switch (command->command) {
                     case COMMAND_PAIR_NEW_DEVICE:
 #ifdef BLUETOOTH_ENABLED
-                        bt_set_pairing_mode(true);
+                        if (config.flags & BLUETOOTH_ENABLED_FLAG_MASK) {
+                            bt_set_pairing_mode(true);
+                        }
 #endif
                         break;
                     case COMMAND_FORGET_ALL_DEVICES:
 #ifdef BLUETOOTH_ENABLED
-                        bt_forget_all_devices();
+                        if (config.flags & BLUETOOTH_ENABLED_FLAG_MASK) {
+                            bt_forget_all_devices();
+                        }
 #endif
                         break;
                     default:
@@ -359,45 +371,67 @@ int main(void) {
         our_descriptor_number = 0;
     }
     serial_init();
+
 #if (defined(NETWORK_ENABLED) || defined(BLUETOOTH_ENABLED))
-    cyw43_arch_init();
+    if (cyw43_arch_init()) {
+        printf("Failed to initialize CYW43\n");
+        return -1;
+    }
 #endif
+
 #ifdef NETWORK_ENABLED
     net_init();
 #endif
+
 #ifdef BLUETOOTH_ENABLED
     if (config.flags & BLUETOOTH_ENABLED_FLAG_MASK) {
         bt_init();
     }
 #endif
+
     tusb_init();
 
     while (true) {
         tud_task();
+
 #if (defined(NETWORK_ENABLED) || defined(BLUETOOTH_ENABLED))
         cyw43_arch_poll();
 #endif
+
 #ifdef NETWORK_ENABLED
         net_task();
 #endif
+
+        // LED control for connection status
 #if (defined(NETWORK_ENABLED) || defined(BLUETOOTH_ENABLED))
         bool led_on = false;
 #endif
+
 #ifdef NETWORK_ENABLED
         led_on = led_on || wifi_connected;
 #endif
+
 #ifdef BLUETOOTH_ENABLED
         led_on = led_on || bt_is_connected();
         if (bt_get_pairing_mode()) {
-            led_on = (time_us_32() % 300000) > 150000;
+            led_on = (time_us_32() % 300000) > 150000;  // Blink during pairing
         }
 #endif
+
 #if (defined(NETWORK_ENABLED) || defined(BLUETOOTH_ENABLED))
         cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, led_on);
 #endif
+
         serial_task();
+
+        // Process queued reports for both USB and BLE
         if ((or_items > 0) && (tud_hid_n_ready(0))) {
             tud_hid_n_report(0, outgoing_reports[or_head].report_id, outgoing_reports[or_head].data, outgoing_reports[or_head].len);
+#ifdef BLUETOOTH_ENABLED
+            if (bt_is_connected()) {
+                bt_send_hid_report(outgoing_reports[or_head].data, outgoing_reports[or_head].len);
+            }
+#endif
             or_head = (or_head + 1) % OR_BUFSIZE;
             or_items--;
         }
