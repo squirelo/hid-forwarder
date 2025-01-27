@@ -137,6 +137,40 @@ static uint16_t rx_char_handle;
 static uint16_t tx_char_handle;
 static uint8_t characteristic_data = 0;
 
+// Add these callback registrations at the top with other static declarations
+static btstack_packet_callback_registration_t sm_event_callback_registration;
+
+// Add the SM packet handler
+static void sm_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size) {
+    if (packet_type != HCI_EVENT_PACKET) return;
+
+    switch (hci_event_packet_get_type(packet)) {
+        case SM_EVENT_JUST_WORKS_REQUEST:
+            sm_just_works_confirm(sm_event_just_works_request_get_handle(packet));
+            break;
+            
+        case SM_EVENT_PAIRING_COMPLETE:
+            switch (sm_event_pairing_complete_get_status(packet)) {
+                case ERROR_CODE_SUCCESS:
+                    printf("Pairing complete, success\n");
+                    break;
+                case ERROR_CODE_CONNECTION_TIMEOUT:
+                    printf("Pairing failed, timeout\n");
+                    break;
+                case ERROR_CODE_REMOTE_USER_TERMINATED_CONNECTION:
+                    printf("Pairing failed, disconnected\n");
+                    break;
+                case ERROR_CODE_AUTHENTICATION_FAILURE:
+                    printf("Pairing failed, reason = %u\n", 
+                        sm_event_pairing_complete_get_reason(packet));
+                    break;
+                default:
+                    break;
+            }
+            break;
+    }
+}
+
 // Callback for GATT events
 static void gatt_event_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size) {
     if (packet_type != HCI_EVENT_PACKET) return;
@@ -168,29 +202,99 @@ static int att_write_callback(hci_con_handle_t connection_handle, uint16_t att_h
     if (att_handle == tx_char_handle) {
         characteristic_data = buffer[0];
         printf("Received write: 0x%02x\n", characteristic_data);
+        
+        // Flash LED when data is received
+        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
+        sleep_ms(50);  // Keep LED on for 50ms
+        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);
+        
         return 0;
     }
     return 0;
 }
 
-// Add new advertising data definitions
+// Update advertising data to show both HID and Nordic UART services
 static uint8_t adv_data[] = {
     // Flags (3 bytes)
     0x02, 0x01, 0x06,
-    // Service UUID (17 bytes)
-    0x11, 0x07, 
-    0x6E, 0x40, 0x00, 0x01, 0xB5, 0xA3, 0xF3, 0x93,
-    0xE0, 0xA9, 0xE5, 0x0E, 0x24, 0xDC, 0xCA, 0x9E,
-    // Local name (7 bytes)
-    0x06, 0x09, 'P', 'i', 'c', 'o', 'W'
+    // List of 16-bit Service UUIDs (5 bytes)
+    0x05, 0x03, 0x12, 0x18,  // HID Service UUID (0x1812)
+    0x6E, 0x40,              // Nordic UART Service (shortened)
+    // Appearance (4 bytes) - Gamepad (0x03C4)
+    0x03, 0x19, 0xC4, 0x03,
+    // Local name (8 bytes)
+    0x07, 0x09, 'P', 'i', 'c', 'o', 'W', 'G'
 };
 
 static uint8_t scan_resp_data[] = {
     // Complete local name
-    0x06, 0x09, 'P', 'i', 'c', 'o', 'W'
+    0x07, 0x09, 'P', 'i', 'c', 'o', 'W', 'G'
 };
 
-// Update ble_init function
+// Add HID Report Descriptor
+static const uint8_t hid_report_descriptor[] = {
+    0x05, 0x01,        // Usage Page (Generic Desktop Ctrls)
+    0x09, 0x05,        // Usage (Game Pad)
+    0xA1, 0x01,        // Collection (Application)
+    0x85, 0x01,        //   Report ID (1)
+    0x05, 0x01,        //   Usage Page (Generic Desktop Ctrls)
+    0x09, 0x30,        //   Usage (X)
+    0x09, 0x31,        //   Usage (Y)
+    0x09, 0x32,        //   Usage (Z)
+    0x09, 0x35,        //   Usage (Rz)
+    0x09, 0x33,        //   Usage (Rx)
+    0x09, 0x34,        //   Usage (Ry)
+    0x15, 0x81,        //   Logical Minimum (-127)
+    0x25, 0x7F,        //   Logical Maximum (127)
+    0x75, 0x08,        //   Report Size (8)
+    0x95, 0x06,        //   Report Count (6)
+    0x81, 0x02,        //   Input (Data,Var,Abs)
+    0x05, 0x01,        //   Usage Page (Generic Desktop Ctrls)
+    0x09, 0x39,        //   Usage (Hat switch)
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x25, 0x07,        //   Logical Maximum (7)
+    0x35, 0x00,        //   Physical Minimum (0)
+    0x46, 0x3B, 0x01,  //   Physical Maximum (315)
+    0x65, 0x14,        //   Unit (System: English Rotation, Length: Centimeter)
+    0x75, 0x08,        //   Report Size (8)
+    0x95, 0x01,        //   Report Count (1)
+    0x81, 0x02,        //   Input (Data,Var,Abs)
+    0x05, 0x09,        //   Usage Page (Button)
+    0x19, 0x01,        //   Usage Minimum (0x01)
+    0x29, 0x20,        //   Usage Maximum (0x20)
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x25, 0x01,        //   Logical Maximum (1)
+    0x75, 0x01,        //   Report Size (1)
+    0x95, 0x20,        //   Report Count (32)
+    0x81, 0x02,        //   Input (Data,Var,Abs)
+    0xC0               // End Collection
+};
+
+// Add HID Service and Characteristic UUIDs
+static const uint8_t hid_service_uuid[] = {0x12, 0x18};  // 0x1812
+static const uint8_t hid_report_map_uuid[] = {0x4B, 0x2A};  // 0x2A4B
+static const uint8_t hid_report_uuid[] = {0x4D, 0x2A};  // 0x2A4D
+static const uint8_t hid_protocol_mode_uuid[] = {0x4E, 0x2A};  // 0x2A4E
+
+// Add gamepad report structure
+typedef struct __attribute__((packed)) {
+    int8_t x;
+    int8_t y;
+    int8_t z;
+    int8_t rz;
+    int8_t rx;
+    int8_t ry;
+    uint8_t hat;
+    uint32_t buttons;
+} gamepad_report_t;
+
+static gamepad_report_t gamepad_state = {0};
+
+// Add security requirements
+#define SECURITY_ENABLED 1
+#define REQUIRE_BONDING 1
+
+// Update ble_init function to include security
 void ble_init(void) {
     printf("Starting BLE initialization...\n");
 
@@ -200,50 +304,64 @@ void ble_init(void) {
         return;
     }
 
+    // Configure LED
+    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);  // Turn LED off initially
+
     // Initialize BTstack with simplified setup
     l2cap_init();
+    
+    // Initialize security manager
     sm_init();
-
+    
+    // Set security parameters
+    sm_set_io_capabilities(IO_CAPABILITY_NO_INPUT_NO_OUTPUT);
+    sm_set_authentication_requirements(SM_AUTHREQ_BONDING | SM_AUTHREQ_MITM_PROTECTION);
+    
+    // Register for SM events
+    sm_event_callback_registration.callback = &sm_packet_handler;
+    sm_add_event_handler(&sm_event_callback_registration);
+    
     // Setup ATT DB
     att_db_util_init();
 
-    // Add Nordic UART Service
-    uart_service_handle = att_db_util_add_service_uuid128(nordic_uart_service_uuid);
+    // Add HID Service and characteristics
+    uint16_t hid_service_handle = att_db_util_add_service_uuid16(0x1812);
 
-    // Add RX Characteristic
-    uart_rx_characteristic_handle = att_db_util_add_characteristic_uuid128(
-        nordic_uart_rx_uuid,
-        ATT_PROPERTY_WRITE | ATT_PROPERTY_WRITE_WITHOUT_RESPONSE,
+    // Add HID Report Map Characteristic
+    att_db_util_add_characteristic_uuid16(
+        0x2A4B,  // Report Map
+        ATT_PROPERTY_READ,
         ATT_SECURITY_NONE,
         ATT_SECURITY_NONE,
-        NULL,
-        0);
+        (uint8_t*)hid_report_descriptor,
+        sizeof(hid_report_descriptor));
 
-    // Add TX Characteristic
-    uart_tx_characteristic_handle = att_db_util_add_characteristic_uuid128(
-        nordic_uart_tx_uuid,
-        ATT_PROPERTY_NOTIFY,
+    // Add HID Report Characteristic
+    uint16_t hid_report_handle = att_db_util_add_characteristic_uuid16(
+        0x2A4D,  // Report
+        ATT_PROPERTY_READ | ATT_PROPERTY_NOTIFY | ATT_PROPERTY_WRITE,
         ATT_SECURITY_NONE,
         ATT_SECURITY_NONE,
-        NULL,
-        0);
+        (uint8_t*)&gamepad_state,
+        sizeof(gamepad_state));
+
+    // Add Protocol Mode Characteristic
+    uint8_t protocol_mode = 0x01;  // Report Protocol Mode
+    att_db_util_add_characteristic_uuid16(
+        0x2A4E,  // Protocol Mode
+        ATT_PROPERTY_READ | ATT_PROPERTY_WRITE_WITHOUT_RESPONSE,
+        ATT_SECURITY_NONE,
+        ATT_SECURITY_NONE,
+        &protocol_mode,
+        sizeof(protocol_mode));
 
     // Initialize ATT Server
     att_server_init(profile_data, att_read_callback, att_write_callback);    
 
-    // Setup advertisements with complete parameters
-    gap_advertisements_set_params(0x0100,    // adv_int_min
-                                0x0100,      // adv_int_max
-                                0,           // ADV_IND type (0 in BTstack)
-                                0,           // Public address type
-                                NULL,        // No direct address
-                                0x07,        // Primary advertising channels (all)
-                                0);          // No filter policy
-
-    // Set advertisement data and scan response
+    // Set advertisement data only once
     gap_advertisements_set_data(sizeof(adv_data), adv_data);
     gap_scan_response_set_data(sizeof(scan_resp_data), scan_resp_data);
-    
+
     // Enable advertisements
     gap_advertisements_enable(1);
 
@@ -252,12 +370,19 @@ void ble_init(void) {
 
     // Turn on Bluetooth
     hci_power_control(HCI_POWER_ON);
+
+    printf("BLE initialization completed with security enabled\n");
 }
 
+// Update main function to register security handler
 int main() {
     stdio_init_all();
 
     ble_init();
+
+    // Register for Security Manager events
+    sm_event_callback_registration.callback = &sm_packet_handler;
+    sm_add_event_handler(&sm_event_callback_registration);
 
     // BTstack run loop
     btstack_run_loop_execute();
