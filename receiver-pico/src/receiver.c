@@ -197,29 +197,78 @@ static uint16_t att_read_callback(hci_con_handle_t connection_handle, uint16_t a
     return 0;
 }
 
-// Callback for write requests
+// Add UART buffer and handler
+#define RX_BUFFER_SIZE 100
+static uint8_t rx_buffer[RX_BUFFER_SIZE];
+static uint16_t rx_buffer_len = 0;
+static msg_recv_cb_t uart_rx_handler = NULL;
+
+// Function to handle received data
+static void handle_uart_rx() {
+    if (uart_rx_handler) {
+        uart_rx_handler(rx_buffer, rx_buffer_len);
+        rx_buffer_len = 0;
+    }
+}
+
+// Function to write data to connected devices
+static void uart_write(const uint8_t* data, uint16_t len) {
+    if (con_handle != HCI_CON_HANDLE_INVALID) {
+        // Request to send notification
+        att_server_request_can_send_now_event(con_handle);
+        // Send notification
+        att_server_notify(con_handle, uart_tx_characteristic_handle, data, len);
+    }
+}
+
+// Update the packet handler to handle UART data
+static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size) {
+    uint8_t event = hci_event_packet_get_type(packet);
+    
+    switch (event) {
+        case HCI_EVENT_DISCONNECTION_COMPLETE:
+            con_handle = HCI_CON_HANDLE_INVALID;
+            printf("Disconnected\n");
+            // Restart advertising
+            gap_advertisements_enable(1);
+            break;
+            
+        case HCI_EVENT_LE_META:
+            switch (hci_event_le_meta_get_subevent_code(packet)) {
+                case HCI_SUBEVENT_LE_CONNECTION_COMPLETE:
+                    con_handle = hci_subevent_le_connection_complete_get_connection_handle(packet);
+                    printf("Connected\n");
+                    break;
+            }
+            break;
+    }
+}
+
+// Update the write callback to handle UART RX
 static int att_write_callback(hci_con_handle_t connection_handle, uint16_t att_handle, uint16_t transaction_mode, uint16_t offset, uint8_t *buffer, uint16_t buffer_size) {
-    if (att_handle == tx_char_handle) {
-        characteristic_data = buffer[0];
-        printf("Received write: 0x%02x\n", characteristic_data);
-        
-        // Flash LED when data is received
-        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
-        sleep_ms(50);  // Keep LED on for 50ms
-        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);
-        
+    if (att_handle == uart_rx_characteristic_handle) {
+        // Check if we have space in the buffer
+        if (rx_buffer_len + buffer_size <= RX_BUFFER_SIZE) {
+            memcpy(rx_buffer + rx_buffer_len, buffer, buffer_size);
+            rx_buffer_len += buffer_size;
+            handle_uart_rx();
+        }
         return 0;
     }
     return 0;
 }
 
-// Update advertising data to show both HID and Nordic UART services
+// Function to set the RX handler
+void uart_set_rx_handler(msg_recv_cb_t handler) {
+    uart_rx_handler = handler;
+}
+
+// Update advertising data to show as HID gamepad but implement Nordic UART
 static uint8_t adv_data[] = {
     // Flags (3 bytes)
     0x02, 0x01, 0x06,
-    // List of 16-bit Service UUIDs (5 bytes)
-    0x05, 0x03, 0x12, 0x18,  // HID Service UUID (0x1812)
-    0x6E, 0x40,              // Nordic UART Service (shortened)
+    // List of 16-bit Service UUIDs (3 bytes)
+    0x03, 0x03, 0x12, 0x18,  // HID Service UUID (0x1812)
     // Appearance (4 bytes) - Gamepad (0x03C4)
     0x03, 0x19, 0xC4, 0x03,
     // Local name (8 bytes)
@@ -231,70 +280,7 @@ static uint8_t scan_resp_data[] = {
     0x07, 0x09, 'P', 'i', 'c', 'o', 'W', 'G'
 };
 
-// Add HID Report Descriptor
-static const uint8_t hid_report_descriptor[] = {
-    0x05, 0x01,        // Usage Page (Generic Desktop Ctrls)
-    0x09, 0x05,        // Usage (Game Pad)
-    0xA1, 0x01,        // Collection (Application)
-    0x85, 0x01,        //   Report ID (1)
-    0x05, 0x01,        //   Usage Page (Generic Desktop Ctrls)
-    0x09, 0x30,        //   Usage (X)
-    0x09, 0x31,        //   Usage (Y)
-    0x09, 0x32,        //   Usage (Z)
-    0x09, 0x35,        //   Usage (Rz)
-    0x09, 0x33,        //   Usage (Rx)
-    0x09, 0x34,        //   Usage (Ry)
-    0x15, 0x81,        //   Logical Minimum (-127)
-    0x25, 0x7F,        //   Logical Maximum (127)
-    0x75, 0x08,        //   Report Size (8)
-    0x95, 0x06,        //   Report Count (6)
-    0x81, 0x02,        //   Input (Data,Var,Abs)
-    0x05, 0x01,        //   Usage Page (Generic Desktop Ctrls)
-    0x09, 0x39,        //   Usage (Hat switch)
-    0x15, 0x00,        //   Logical Minimum (0)
-    0x25, 0x07,        //   Logical Maximum (7)
-    0x35, 0x00,        //   Physical Minimum (0)
-    0x46, 0x3B, 0x01,  //   Physical Maximum (315)
-    0x65, 0x14,        //   Unit (System: English Rotation, Length: Centimeter)
-    0x75, 0x08,        //   Report Size (8)
-    0x95, 0x01,        //   Report Count (1)
-    0x81, 0x02,        //   Input (Data,Var,Abs)
-    0x05, 0x09,        //   Usage Page (Button)
-    0x19, 0x01,        //   Usage Minimum (0x01)
-    0x29, 0x20,        //   Usage Maximum (0x20)
-    0x15, 0x00,        //   Logical Minimum (0)
-    0x25, 0x01,        //   Logical Maximum (1)
-    0x75, 0x01,        //   Report Size (1)
-    0x95, 0x20,        //   Report Count (32)
-    0x81, 0x02,        //   Input (Data,Var,Abs)
-    0xC0               // End Collection
-};
-
-// Add HID Service and Characteristic UUIDs
-static const uint8_t hid_service_uuid[] = {0x12, 0x18};  // 0x1812
-static const uint8_t hid_report_map_uuid[] = {0x4B, 0x2A};  // 0x2A4B
-static const uint8_t hid_report_uuid[] = {0x4D, 0x2A};  // 0x2A4D
-static const uint8_t hid_protocol_mode_uuid[] = {0x4E, 0x2A};  // 0x2A4E
-
-// Add gamepad report structure
-typedef struct __attribute__((packed)) {
-    int8_t x;
-    int8_t y;
-    int8_t z;
-    int8_t rz;
-    int8_t rx;
-    int8_t ry;
-    uint8_t hat;
-    uint32_t buttons;
-} gamepad_report_t;
-
-static gamepad_report_t gamepad_state = {0};
-
-// Add security requirements
-#define SECURITY_ENABLED 1
-#define REQUIRE_BONDING 1
-
-// Update ble_init function to include security
+// Update ble_init to include both HID appearance and Nordic UART service
 void ble_init(void) {
     printf("Starting BLE initialization...\n");
 
@@ -305,9 +291,9 @@ void ble_init(void) {
     }
 
     // Configure LED
-    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);  // Turn LED off initially
+    cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);
 
-    // Initialize BTstack with simplified setup
+    // Initialize L2CAP
     l2cap_init();
     
     // Initialize security manager
@@ -315,7 +301,7 @@ void ble_init(void) {
     
     // Set security parameters
     sm_set_io_capabilities(IO_CAPABILITY_NO_INPUT_NO_OUTPUT);
-    sm_set_authentication_requirements(SM_AUTHREQ_BONDING | SM_AUTHREQ_MITM_PROTECTION);
+    sm_set_authentication_requirements(SM_AUTHREQ_BONDING);
     
     // Register for SM events
     sm_event_callback_registration.callback = &sm_packet_handler;
@@ -324,65 +310,63 @@ void ble_init(void) {
     // Setup ATT DB
     att_db_util_init();
 
-    // Add HID Service and characteristics
-    uint16_t hid_service_handle = att_db_util_add_service_uuid16(0x1812);
+    // Add Nordic UART Service (but advertise as HID)
+    uart_service_handle = att_db_util_add_service_uuid128(nordic_uart_service_uuid);
 
-    // Add HID Report Map Characteristic
-    att_db_util_add_characteristic_uuid16(
-        0x2A4B,  // Report Map
-        ATT_PROPERTY_READ,
+    // Add TX Characteristic
+    uart_tx_characteristic_handle = att_db_util_add_characteristic_uuid128(
+        nordic_uart_tx_uuid,
+        ATT_PROPERTY_NOTIFY,
         ATT_SECURITY_NONE,
         ATT_SECURITY_NONE,
-        (uint8_t*)hid_report_descriptor,
-        sizeof(hid_report_descriptor));
+        NULL,
+        0);
 
-    // Add HID Report Characteristic
-    uint16_t hid_report_handle = att_db_util_add_characteristic_uuid16(
-        0x2A4D,  // Report
-        ATT_PROPERTY_READ | ATT_PROPERTY_NOTIFY | ATT_PROPERTY_WRITE,
+    // Add RX Characteristic
+    uart_rx_characteristic_handle = att_db_util_add_characteristic_uuid128(
+        nordic_uart_rx_uuid,
+        ATT_PROPERTY_WRITE | ATT_PROPERTY_WRITE_WITHOUT_RESPONSE,
         ATT_SECURITY_NONE,
         ATT_SECURITY_NONE,
-        (uint8_t*)&gamepad_state,
-        sizeof(gamepad_state));
-
-    // Add Protocol Mode Characteristic
-    uint8_t protocol_mode = 0x01;  // Report Protocol Mode
-    att_db_util_add_characteristic_uuid16(
-        0x2A4E,  // Protocol Mode
-        ATT_PROPERTY_READ | ATT_PROPERTY_WRITE_WITHOUT_RESPONSE,
-        ATT_SECURITY_NONE,
-        ATT_SECURITY_NONE,
-        &protocol_mode,
-        sizeof(protocol_mode));
+        NULL,
+        0);
 
     // Initialize ATT Server
     att_server_init(profile_data, att_read_callback, att_write_callback);    
 
-    // Set advertisement data only once
+    // Register packet handler
+    hci_event_callback_registration.callback = &packet_handler;
+    hci_add_event_handler(&hci_event_callback_registration);
+
+    // Set advertisement data (HID Gamepad appearance)
     gap_advertisements_set_data(sizeof(adv_data), adv_data);
     gap_scan_response_set_data(sizeof(scan_resp_data), scan_resp_data);
-
-    // Enable advertisements
     gap_advertisements_enable(1);
-
-    // Register for ATT events
-    att_server_register_packet_handler(gatt_event_handler);
 
     // Turn on Bluetooth
     hci_power_control(HCI_POWER_ON);
 
-    printf("BLE initialization completed with security enabled\n");
+    printf("BLE initialization completed\n");
 }
 
-// Update main function to register security handler
+// Example message handler
+void handle_message(const uint8_t* data, uint16_t len) {
+    // Convert data to null-terminated string for easier handling
+    char message[256] = {0};
+    memcpy(message, data, len < 255 ? len : 255);
+    
+    printf("rx: %s\n", message);
+    
+    // Add your message handling logic here
+    // This is where you can interpret the received data and respond accordingly
+}
+
 int main() {
     stdio_init_all();
+    printf("Starting BLE UART (appearing as HID Gamepad)\n");
 
     ble_init();
-
-    // Register for Security Manager events
-    sm_event_callback_registration.callback = &sm_packet_handler;
-    sm_add_event_handler(&sm_event_callback_registration);
+    uart_set_rx_handler(handle_message);
 
     // BTstack run loop
     btstack_run_loop_execute();
