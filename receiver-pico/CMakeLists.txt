@@ -10,6 +10,12 @@ set(PICO_SDK_PATH "${CMAKE_CURRENT_LIST_DIR}/pico-sdk")
 # Configure CYW43 architecture
 set(PICO_CYW43_ARCH_THREADSAFE_BACKGROUND 1)
 
+# Create directories for generated files
+set(GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+set(GATT_HEADER_DIR "${GENERATED_DIR}/receiver_gatt_header")
+file(REMOVE_RECURSE "${GATT_HEADER_DIR}")
+file(MAKE_DIRECTORY "${GATT_HEADER_DIR}")
+
 include(pico_sdk_import.cmake)
 
 project(receiver)
@@ -21,11 +27,16 @@ add_executable(receiver
     src/crc.c
     src/globals.c
 )
+
+# Add GATT database generation after the executable is defined
+pico_btstack_make_gatt_header(receiver PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/receiver.gatt")
+
 target_include_directories(receiver PRIVATE src)
 target_include_directories(receiver PRIVATE
     ${PICO_SDK_PATH}/lib/btstack/src
     ${PICO_SDK_PATH}/lib/btstack/3rd-party/micro-ecc
     ${PICO_SDK_PATH}/lib/btstack/platform/embedded
+    ${GATT_HEADER_DIR}
 )
 target_link_libraries(receiver
     pico_stdlib

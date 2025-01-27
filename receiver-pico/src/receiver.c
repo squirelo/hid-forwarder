@@ -30,19 +30,19 @@
 
 // Nordic UART Service UUID
 static const uint8_t nordic_uart_service_uuid[] = {
-    0x6E, 0x40, 0x00, 0x01, 0xB5, 0xA3, 0xF3, 0x93,
+    0x9E, 0x40, 0x00, 0x00, 0xB5, 0xA3, 0xF3, 0x93,
     0xE0, 0xA9, 0xE5, 0x0E, 0x24, 0xDC, 0xCA, 0x9E
 };
 
 // Nordic UART RX UUID
 static const uint8_t nordic_uart_rx_uuid[] = {
-    0x6E, 0x40, 0x00, 0x02, 0xB5, 0xA3, 0xF3, 0x93,
+    0x9E, 0x40, 0x00, 0x02, 0xB5, 0xA3, 0xF3, 0x93,
     0xE0, 0xA9, 0xE5, 0x0E, 0x24, 0xDC, 0xCA, 0x9E
 };
 
 // Nordic UART TX UUID
 static const uint8_t nordic_uart_tx_uuid[] = {
-    0x6E, 0x40, 0x00, 0x03, 0xB5, 0xA3, 0xF3, 0x93,
+    0x9E, 0x40, 0x00, 0x03, 0xB5, 0xA3, 0xF3, 0x93,
     0xE0, 0xA9, 0xE5, 0x0E, 0x24, 0xDC, 0xCA, 0x9E
 };
 
@@ -203,32 +203,41 @@ static int att_write_callback(hci_con_handle_t connection_handle, uint16_t att_h
         characteristic_data = buffer[0];
         printf("Received write: 0x%02x\n", characteristic_data);
         
-        // Flash LED when data is received
-        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 1);
-        sleep_ms(50);  // Keep LED on for 50ms
-        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);
+        // Toggle LED state when data is received
+        static bool led_state = false;
+        led_state = !led_state;
+        cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, led_state);
         
         return 0;
     }
     return 0;
 }
 
-// Update advertising data to show both HID and Nordic UART services
+// Add Device Information Service UUID
+static const uint8_t device_information_service_uuid[] = {0x0A, 0x18};  // 0x180A
+
+// Add manufacturer name string
+static const char manufacturer_name[] = "Pico BLE Bridge";
+static const char model_number[] = "PicoW-1.0";
+static const char firmware_rev[] = "1.0.0";
+
+// Update advertisement data to match Bluefruit format
 static uint8_t adv_data[] = {
-    // Flags (3 bytes)
-    0x02, 0x01, 0x06,
-    // List of 16-bit Service UUIDs (5 bytes)
-    0x05, 0x03, 0x12, 0x18,  // HID Service UUID (0x1812)
-    0x6E, 0x40,              // Nordic UART Service (shortened)
-    // Appearance (4 bytes) - Gamepad (0x03C4)
-    0x03, 0x19, 0xC4, 0x03,
-    // Local name (8 bytes)
-    0x07, 0x09, 'P', 'i', 'c', 'o', 'W', 'G'
+    // Flags
+    0x02, 0x01, 0x06,  // General discoverable, BR/EDR not supported
+    
+    // Complete Local Name
+    0x0B, 0x09, 'P', 'i', 'c', 'o', 'f', 'r', 'u', 'i', 't', ' ',
+    
+    // 128-bit Service UUID (Adafruit UART)
+    0x11, 0x06,  // Length and Complete List of 128-bit Service UUIDs
+    0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0,
+    0x93, 0xF3, 0xA3, 0xB5, 0x00, 0x00, 0x40, 0x9E
 };
 
 static uint8_t scan_resp_data[] = {
-    // Complete local name
-    0x07, 0x09, 'P', 'i', 'c', 'o', 'W', 'G'
+    // Complete Local Name (repeated in scan response)
+    0x0B, 0x09, 'P', 'i', 'c', 'o', 'f', 'r', 'u', 'i', 't', ' '
 };
 
 // Add HID Report Descriptor
@@ -307,71 +316,99 @@ void ble_init(void) {
     // Configure LED
     cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, 0);  // Turn LED off initially
 
-    // Initialize BTstack with simplified setup
+    // Initialize L2CAP
     l2cap_init();
-    
-    // Initialize security manager
+    printf("L2CAP initialized\n");
+
+    // Initialize Security Manager
     sm_init();
-    
-    // Set security parameters
     sm_set_io_capabilities(IO_CAPABILITY_NO_INPUT_NO_OUTPUT);
-    sm_set_authentication_requirements(SM_AUTHREQ_BONDING | SM_AUTHREQ_MITM_PROTECTION);
-    
-    // Register for SM events
+    sm_set_authentication_requirements(SM_AUTHREQ_BONDING);
+    printf("Security Manager initialized\n");
+
+    // Register for Security Manager events
     sm_event_callback_registration.callback = &sm_packet_handler;
     sm_add_event_handler(&sm_event_callback_registration);
-    
+
     // Setup ATT DB
     att_db_util_init();
+    printf("ATT DB initialized\n");
 
-    // Add HID Service and characteristics
-    uint16_t hid_service_handle = att_db_util_add_service_uuid16(0x1812);
+    // Add Device Information Service
+    uint16_t dev_info_handle = att_db_util_add_service_uuid16(0x180A);
+    printf("Added Device Information Service: handle 0x%04x\n", dev_info_handle);
+    
+    att_db_util_add_characteristic_uuid16(0x2A29, ATT_PROPERTY_READ, ATT_SECURITY_NONE, ATT_SECURITY_NONE,
+        (uint8_t*)manufacturer_name, strlen(manufacturer_name));
+    att_db_util_add_characteristic_uuid16(0x2A24, ATT_PROPERTY_READ, ATT_SECURITY_NONE, ATT_SECURITY_NONE,
+        (uint8_t*)model_number, strlen(model_number));
+    att_db_util_add_characteristic_uuid16(0x2A26, ATT_PROPERTY_READ, ATT_SECURITY_NONE, ATT_SECURITY_NONE,
+        (uint8_t*)firmware_rev, strlen(firmware_rev));
 
-    // Add HID Report Map Characteristic
-    att_db_util_add_characteristic_uuid16(
-        0x2A4B,  // Report Map
-        ATT_PROPERTY_READ,
+    // Add Nordic UART Service with Adafruit-compatible properties
+    uart_service_handle = att_db_util_add_service_uuid128(nordic_uart_service_uuid);
+    
+    uart_tx_characteristic_handle = att_db_util_add_characteristic_uuid128(
+        nordic_uart_tx_uuid,
+        ATT_PROPERTY_NOTIFY | ATT_PROPERTY_READ,  // Add READ property
         ATT_SECURITY_NONE,
         ATT_SECURITY_NONE,
-        (uint8_t*)hid_report_descriptor,
-        sizeof(hid_report_descriptor));
+        NULL,
+        0
+    );
+    
+    uart_rx_characteristic_handle = att_db_util_add_characteristic_uuid128(
+        nordic_uart_rx_uuid,
+        ATT_PROPERTY_WRITE | ATT_PROPERTY_WRITE_WITHOUT_RESPONSE | ATT_PROPERTY_READ,  // Add READ property
+        ATT_SECURITY_NONE,
+        ATT_SECURITY_NONE,
+        NULL,
+        0
+    );
 
-    // Add HID Report Characteristic
-    uint16_t hid_report_handle = att_db_util_add_characteristic_uuid16(
-        0x2A4D,  // Report
-        ATT_PROPERTY_READ | ATT_PROPERTY_NOTIFY | ATT_PROPERTY_WRITE,
-        ATT_SECURITY_NONE,
-        ATT_SECURITY_NONE,
-        (uint8_t*)&gamepad_state,
-        sizeof(gamepad_state));
+    // Add HID Service
+    uint16_t hid_handle = att_db_util_add_service_uuid16(0x1812);
+    printf("Added HID Service: handle 0x%04x\n", hid_handle);
+    
+    att_db_util_add_characteristic_uuid16(0x2A4B, ATT_PROPERTY_READ,
+        ATT_SECURITY_NONE, ATT_SECURITY_NONE,
+        (uint8_t*)hid_report_descriptor, sizeof(hid_report_descriptor));
+    att_db_util_add_characteristic_uuid16(0x2A4D,
+        ATT_PROPERTY_READ | ATT_PROPERTY_NOTIFY,
+        ATT_SECURITY_NONE, ATT_SECURITY_NONE,
+        (uint8_t*)&gamepad_state, sizeof(gamepad_state));
 
-    // Add Protocol Mode Characteristic
-    uint8_t protocol_mode = 0x01;  // Report Protocol Mode
-    att_db_util_add_characteristic_uuid16(
-        0x2A4E,  // Protocol Mode
-        ATT_PROPERTY_READ | ATT_PROPERTY_WRITE_WITHOUT_RESPONSE,
-        ATT_SECURITY_NONE,
-        ATT_SECURITY_NONE,
-        &protocol_mode,
-        sizeof(protocol_mode));
+    // Get the generated profile
+    uint8_t * profile_data = att_db_util_get_address();
+    uint16_t profile_data_len = att_db_util_get_size();
+    printf("Generated ATT DB with %d bytes\n", profile_data_len);
 
-    // Initialize ATT Server
+    // Initialize ATT Server with the generated profile
     att_server_init(profile_data, att_read_callback, att_write_callback);    
+    printf("ATT Server initialized\n");
 
-    // Set advertisement data only once
+    // Set advertisement parameters
+    uint16_t adv_int_min = 0x0030;
+    uint16_t adv_int_max = 0x0060;
+    uint8_t adv_type = 0;
+    bd_addr_t null_addr;
+    memset(null_addr, 0, 6);
+    gap_advertisements_set_params(adv_int_min, adv_int_max, adv_type, 0, null_addr, 0x07, 0x00);
+    printf("Advertisement parameters set\n");
+
+    // Set advertisement data
     gap_advertisements_set_data(sizeof(adv_data), adv_data);
     gap_scan_response_set_data(sizeof(scan_resp_data), scan_resp_data);
-
-    // Enable advertisements
-    gap_advertisements_enable(1);
+    printf("Advertisement data set\n");
 
     // Register for ATT events
     att_server_register_packet_handler(gatt_event_handler);
 
-    // Turn on Bluetooth
+    // Turn on Bluetooth and enable advertisements
     hci_power_control(HCI_POWER_ON);
+    gap_advertisements_enable(1);
 
-    printf("BLE initialization completed with security enabled\n");
+    printf("BLE initialization completed, advertisements enabled\n");
 }
 
 // Update main function to register security handler
