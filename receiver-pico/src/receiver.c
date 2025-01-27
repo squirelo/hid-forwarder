@@ -2,49 +2,26 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Define HCI_ACL_PAYLOAD_SIZE before any BTstack includes
-#define HCI_ACL_PAYLOAD_SIZE 1024
-
-// Add CYW43 include at the top with other includes
-#include "pico/cyw43_arch.h"
+#include "bsp/board.h"
+#include "tusb.h"
+#include "class/hid/hid.h"
 
 #include "hardware/flash.h"
 #include "hardware/gpio.h"
 #include "hardware/uart.h"
 #include "hardware/watchdog.h"
 #include "hardware/sync.h"
-#include "pico/stdio.h"
+
+#include "pico/stdlib.h"
+#include "pico/cyw43_arch.h"
+
+#include "crc.h"
+#include "descriptors.h"
+#include "globals.h"
 
 // BLE headers
+#include "btstack_wrapper.h"
 #include "btstack_run_loop.h"
-#include "btstack_config.h"
-#include "ble/att_db.h"
-#include "ble/att_server.h"
-#include "ble/sm.h"
-#include "btstack.h"
-#include "btstack_event.h"
-
-// Correct includes for Pico W
-#include "pico/stdlib.h"
-
-
-// Nordic UART Service UUID
-static const uint8_t nordic_uart_service_uuid[] = {
-    0x6E, 0x40, 0x00, 0x01, 0xB5, 0xA3, 0xF3, 0x93,
-    0xE0, 0xA9, 0xE5, 0x0E, 0x24, 0xDC, 0xCA, 0x9E
-};
-
-// Nordic UART RX UUID
-static const uint8_t nordic_uart_rx_uuid[] = {
-    0x6E, 0x40, 0x00, 0x02, 0xB5, 0xA3, 0xF3, 0x93,
-    0xE0, 0xA9, 0xE5, 0x0E, 0x24, 0xDC, 0xCA, 0x9E
-};
-
-// Nordic UART TX UUID
-static const uint8_t nordic_uart_tx_uuid[] = {
-    0x6E, 0x40, 0x00, 0x03, 0xB5, 0xA3, 0xF3, 0x93,
-    0xE0, 0xA9, 0xE5, 0x0E, 0x24, 0xDC, 0xCA, 0x9E
-};
 
 #define PERSISTED_CONFIG_SIZE 4096
 #define CONFIG_OFFSET_IN_FLASH (PICO_FLASH_SIZE_BYTES - 16384)
@@ -59,8 +36,7 @@ static const uint8_t nordic_uart_tx_uuid[] = {
 #define SERIAL_RX_PIN 5
 #define SERIAL_MAX_PACKET_SIZE 512
 
-// Add missing definitions
-#define NOUR_DESCRIPTORS 4
+typedef void (*msg_recv_cb_t)(const uint8_t* data, uint16_t len);
 
 typedef struct __attribute__((packed)) {
     uint8_t config_version;
@@ -71,6 +47,26 @@ typedef struct __attribute__((packed)) {
 
 _Static_assert(sizeof(config_t) == 20);
 
+typedef struct __attribute__((packed)) {
+    uint8_t protocol_version;
+    uint8_t our_descriptor_number;
+    uint8_t len;
+    uint8_t report_id;
+    uint8_t data[0];
+} packet_t;
+
+typedef struct {
+    uint8_t report_id;
+    uint8_t len;
+    uint8_t data[64];
+} outgoing_report_t;
+
+#define OR_BUFSIZE 8
+outgoing_report_t outgoing_reports[OR_BUFSIZE];
+uint8_t or_head = 0;
+uint8_t or_tail = 0;
+uint8_t or_items = 0;
+
 config_t config = {
     .config_version = CONFIG_VERSION,
     .our_descriptor_number = 2,
@@ -78,13 +74,44 @@ config_t config = {
     .crc = 0,
 };
 
-// Forward declarations
-typedef void (*msg_recv_cb_t)(const uint8_t* data, uint16_t len);
-uint32_t crc32(const uint8_t* data, size_t len);  // Just declare it, don't implement
-void serial_task(void);
+// BLE connection handle
+static hci_con_handle_t con_handle = HCI_CON_HANDLE_INVALID;
+static uint16_t uart_service_handle;
+static uint16_t uart_rx_characteristic_handle;
+static uint16_t uart_tx_characteristic_handle;
+static uint8_t profile_data[512];
+static btstack_packet_callback_registration_t hci_event_callback_registration;
+static btstack_packet_callback_registration_t sm_event_callback_registration;
 
-// Add global variable
-static uint8_t our_descriptor_number = 0;
+// Add Nordic UART Service UUID
+static const uint8_t nordic_uart_service_uuid[] = {
+    0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0,
+    0x93, 0xF3, 0xA3, 0xB5, 0x01, 0x00, 0x40, 0x6E
+};
+
+// Nordic UART RX UUID
+static const uint8_t nordic_uart_rx_uuid[] = {
+    0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0,
+    0x93, 0xF3, 0xA3, 0xB5, 0x02, 0x00, 0x40, 0x6E
+};
+
+// Nordic UART TX UUID
+static const uint8_t nordic_uart_tx_uuid[] = {
+    0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0,
+    0x93, 0xF3, 0xA3, 0xB5, 0x03, 0x00, 0x40, 0x6E
+};
+
+void queue_outgoing_report(uint8_t report_id, uint8_t* data, uint8_t len) {
+    if (or_items == OR_BUFSIZE) {
+        printf("overflow!\n");
+        return;
+    }
+    outgoing_reports[or_tail].report_id = report_id;
+    outgoing_reports[or_tail].len = len;
+    memcpy(outgoing_reports[or_tail].data, data, len);
+    or_tail = (or_tail + 1) % OR_BUFSIZE;
+    or_items++;
+}
 
 void persist_config() {
     static uint8_t buffer[PERSISTED_CONFIG_SIZE];
@@ -111,9 +138,40 @@ bool config_ok(config_t* c) {
 void config_init() {
     config.crc = crc32((uint8_t*) &config, sizeof(config_t) - 4);
     if (!config_ok((config_t*) FLASH_CONFIG_IN_MEMORY)) {
+        // No valid config in flash, save the default one
+        persist_config();
         return;
     }
     memcpy(&config, FLASH_CONFIG_IN_MEMORY, sizeof(config_t));
+}
+
+void handle_received_packet(const uint8_t* data, uint16_t len) {
+    if (len < sizeof(packet_t)) {
+        printf("packet too small\n");
+        return;
+    }
+    packet_t* msg = (packet_t*) data;
+    len = len - sizeof(packet_t);
+    if ((msg->protocol_version != PROTOCOL_VERSION) ||
+        (msg->len != len) ||
+        (len > 64) ||
+        (msg->our_descriptor_number >= NOUR_DESCRIPTORS)) {
+        printf("ignoring packet\n");
+        return;
+    }
+    
+    if (msg->our_descriptor_number != our_descriptor_number) {
+        config.our_descriptor_number = msg->our_descriptor_number;
+        persist_config();
+        watchdog_reboot(0, 0, 0);
+    }
+
+    // Forward via TinyUSB HID
+    if (tud_hid_n_ready(0)) {
+        tud_hid_n_report(0, msg->report_id, msg->data, len);
+    } else {
+        queue_outgoing_report(msg->report_id, msg->data, len);
+    }
 }
 
 void serial_init() {
@@ -123,22 +181,67 @@ void serial_init() {
     gpio_set_function(SERIAL_RX_PIN, GPIO_FUNC_UART);
 }
 
-// BLE connection handle
-static hci_con_handle_t con_handle = HCI_CON_HANDLE_INVALID;
-static uint16_t uart_service_handle;
-static uint16_t uart_rx_characteristic_handle;
-static uint16_t uart_tx_characteristic_handle;
-static uint8_t profile_data[512];
-static btstack_packet_callback_registration_t hci_event_callback_registration;
+#define END 0300     /* indicates end of packet */
+#define ESC 0333     /* indicates byte stuffing */
+#define ESC_END 0334 /* ESC ESC_END means END data byte */
+#define ESC_ESC 0335 /* ESC ESC_ESC means ESC data byte */
 
-// Simplified BLE service and characteristic handles
-static uint16_t service_handle;
-static uint16_t rx_char_handle;
-static uint16_t tx_char_handle;
-static uint8_t characteristic_data = 0;
+void serial_read(msg_recv_cb_t callback) {
+    static uint8_t buffer[SERIAL_MAX_PACKET_SIZE];
+    static uint16_t bytes_read = 0;
+    static bool escaped = false;
 
-// Add these callback registrations at the top with other static declarations
-static btstack_packet_callback_registration_t sm_event_callback_registration;
+    while (uart_is_readable(SERIAL_UART)) {
+        bytes_read %= sizeof(buffer);
+
+        char c = uart_getc(SERIAL_UART);
+
+        if (escaped) {
+            switch (c) {
+                case ESC_END:
+                    buffer[bytes_read++] = END;
+                    break;
+                case ESC_ESC:
+                    buffer[bytes_read++] = ESC;
+                    break;
+                default:
+                    buffer[bytes_read++] = c;
+                    break;
+            }
+            escaped = false;
+        } else {
+            switch (c) {
+                case END:
+                    if (bytes_read > 4) {
+                        uint32_t crc = crc32(buffer, bytes_read - 4);
+                        uint32_t received_crc = 0;
+                        for (int i = 0; i < 4; i++) {
+                            received_crc = (received_crc << 8) | buffer[bytes_read - 1 - i];
+                        }
+                        if (crc == received_crc) {
+                            callback(buffer, bytes_read - 4);
+                            bytes_read = 0;
+                            return;
+                        } else {
+                            printf("CRC error\n");
+                        }
+                    }
+                    bytes_read = 0;
+                    break;
+                case ESC:
+                    escaped = true;
+                    break;
+                default:
+                    buffer[bytes_read++] = c;
+                    break;
+            }
+        }
+    }
+}
+
+void serial_task() {
+    serial_read(handle_received_packet);
+}
 
 // Add the SM packet handler
 static void sm_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size) {
@@ -171,54 +274,19 @@ static void sm_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *pa
     }
 }
 
-// Callback for GATT events
-static void gatt_event_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size) {
-    if (packet_type != HCI_EVENT_PACKET) return;
-
-    switch (hci_event_packet_get_type(packet)) {
-        case ATT_EVENT_CAN_SEND_NOW:
-            // Handle notification sending here
-            break;
-            
-        case ATT_EVENT_HANDLE_VALUE_INDICATION_COMPLETE:
-            // Handle indication complete
-            break;
-    }
-}
-
-// Callback for read requests
-static uint16_t att_read_callback(hci_con_handle_t connection_handle, uint16_t att_handle, uint16_t offset, uint8_t * buffer, uint16_t buffer_size) {
-    if (att_handle == rx_char_handle) {
-        if (buffer) {
-            buffer[0] = characteristic_data;
-        }
-        return 1;
+// Callback for write requests - this is where we receive HID reports via BLE
+static int att_write_callback(hci_con_handle_t connection_handle, uint16_t att_handle, uint16_t transaction_mode, uint16_t offset, uint8_t *buffer, uint16_t buffer_size) {
+    if (att_handle == uart_rx_characteristic_handle) {
+        // Process received HID report
+        handle_received_packet(buffer, buffer_size);
+        return 0;
     }
     return 0;
 }
 
-// Add UART buffer and handler
-#define RX_BUFFER_SIZE 100
-static uint8_t rx_buffer[RX_BUFFER_SIZE];
-static uint16_t rx_buffer_len = 0;
-static msg_recv_cb_t uart_rx_handler = NULL;
-
-// Function to handle received data
-static void handle_uart_rx() {
-    if (uart_rx_handler) {
-        uart_rx_handler(rx_buffer, rx_buffer_len);
-        rx_buffer_len = 0;
-    }
-}
-
-// Function to write data to connected devices
-static void uart_write(const uint8_t* data, uint16_t len) {
-    if (con_handle != HCI_CON_HANDLE_INVALID) {
-        // Request to send notification
-        att_server_request_can_send_now_event(con_handle);
-        // Send notification
-        att_server_notify(con_handle, uart_tx_characteristic_handle, data, len);
-    }
+// Callback for read requests
+static uint16_t att_read_callback(hci_con_handle_t connection_handle, uint16_t att_handle, uint16_t offset, uint8_t * buffer, uint16_t buffer_size) {
+    return 0;
 }
 
 // Update the packet handler to handle UART data
@@ -244,43 +312,36 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
     }
 }
 
-// Update the write callback to handle UART RX
-static int att_write_callback(hci_con_handle_t connection_handle, uint16_t att_handle, uint16_t transaction_mode, uint16_t offset, uint8_t *buffer, uint16_t buffer_size) {
-    if (att_handle == uart_rx_characteristic_handle) {
-        // Check if we have space in the buffer
-        if (rx_buffer_len + buffer_size <= RX_BUFFER_SIZE) {
-            memcpy(rx_buffer + rx_buffer_len, buffer, buffer_size);
-            rx_buffer_len += buffer_size;
-            handle_uart_rx();
-        }
-        return 0;
-    }
-    return 0;
-}
-
-// Function to set the RX handler
-void uart_set_rx_handler(msg_recv_cb_t handler) {
-    uart_rx_handler = handler;
-}
-
-// Update advertising data to show as HID gamepad but implement Nordic UART
+// Update advertising data to include Nordic UART Service
 static uint8_t adv_data[] = {
     // Flags (3 bytes)
     0x02, 0x01, 0x06,
+    
+    // Complete List of 128-bit Service UUIDs (17 bytes)
+    0x11, 0x07,  // Length (17) and Complete List of 128-bit Service UUIDs
+    0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0,
+    0x93, 0xF3, 0xA3, 0xB5, 0x01, 0x00, 0x40, 0x6E,
+    
     // List of 16-bit Service UUIDs (3 bytes)
     0x03, 0x03, 0x12, 0x18,  // HID Service UUID (0x1812)
+    
     // Appearance (4 bytes) - Gamepad (0x03C4)
     0x03, 0x19, 0xC4, 0x03,
+    
     // Local name (8 bytes)
     0x07, 0x09, 'P', 'i', 'c', 'o', 'W', 'G'
 };
 
 static uint8_t scan_resp_data[] = {
     // Complete local name
-    0x07, 0x09, 'P', 'i', 'c', 'o', 'W', 'G'
+    0x07, 0x09, 'P', 'i', 'c', 'o', 'W', 'G',
+    
+    // Complete List of 128-bit Service UUIDs (17 bytes)
+    0x11, 0x07,  // Length (17) and Complete List of 128-bit Service UUIDs
+    0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0,
+    0x93, 0xF3, 0xA3, 0xB5, 0x01, 0x00, 0x40, 0x6E
 };
 
-// Update ble_init to include both HID appearance and Nordic UART service
 void ble_init(void) {
     printf("Starting BLE initialization...\n");
 
@@ -310,10 +371,10 @@ void ble_init(void) {
     // Setup ATT DB
     att_db_util_init();
 
-    // Add Nordic UART Service (but advertise as HID)
+    // Add Nordic UART Service
     uart_service_handle = att_db_util_add_service_uuid128(nordic_uart_service_uuid);
 
-    // Add TX Characteristic
+    // Add TX Characteristic with notify property
     uart_tx_characteristic_handle = att_db_util_add_characteristic_uuid128(
         nordic_uart_tx_uuid,
         ATT_PROPERTY_NOTIFY,
@@ -322,7 +383,7 @@ void ble_init(void) {
         NULL,
         0);
 
-    // Add RX Characteristic
+    // Add RX Characteristic with write property
     uart_rx_characteristic_handle = att_db_util_add_characteristic_uuid128(
         nordic_uart_rx_uuid,
         ATT_PROPERTY_WRITE | ATT_PROPERTY_WRITE_WITHOUT_RESPONSE,
@@ -338,9 +399,26 @@ void ble_init(void) {
     hci_event_callback_registration.callback = &packet_handler;
     hci_add_event_handler(&hci_event_callback_registration);
 
-    // Set advertisement data (HID Gamepad appearance)
+    // Set advertisement data and scan response
     gap_advertisements_set_data(sizeof(adv_data), adv_data);
     gap_scan_response_set_data(sizeof(scan_resp_data), scan_resp_data);
+
+    // Create empty address for undirected advertising
+    bd_addr_t empty_addr;
+    memset(empty_addr, 0, sizeof(bd_addr_t));
+
+    // Set advertising parameters
+    gap_advertisements_set_params(
+        0x0020,     // adv_int_min (20ms)
+        0x0020,     // adv_int_max (20ms)
+        0,          // adv_type (ADV_IND)
+        0,          // own_address_type
+        empty_addr, // peer_address (not used for undirected advertising)
+        0x07,       // channel_map (all channels)
+        0          // filter_policy
+    );
+    
+    // Start advertising
     gap_advertisements_enable(1);
 
     // Turn on Bluetooth
@@ -349,27 +427,68 @@ void ble_init(void) {
     printf("BLE initialization completed\n");
 }
 
-// Example message handler
-void handle_message(const uint8_t* data, uint16_t len) {
-    // Convert data to null-terminated string for easier handling
-    char message[256] = {0};
-    memcpy(message, data, len < 255 ? len : 255);
-    
-    printf("rx: %s\n", message);
-    
-    // Add your message handling logic here
-    // This is where you can interpret the received data and respond accordingly
+// TinyUSB HID callbacks
+uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t* buffer, uint16_t reqlen) {
+    // Not used for this application
+    (void) instance;
+    (void) report_id;
+    (void) report_type;
+    (void) buffer;
+    (void) reqlen;
+    return 0;
 }
 
-int main() {
+void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t const* buffer, uint16_t bufsize) {
+    // Not used for this application
+    (void) instance;
+    (void) report_id;
+    (void) report_type;
+    (void) buffer;
+    (void) bufsize;
+}
+
+int main(void) {
+    board_init();
     stdio_init_all();
-    printf("Starting BLE UART (appearing as HID Gamepad)\n");
-
+    printf("BLE to USB HID Bridge\n");
+    config_init();
+    our_descriptor_number = config.our_descriptor_number;
+    if (our_descriptor_number >= NOUR_DESCRIPTORS) {
+        our_descriptor_number = 0;
+    }
+    serial_init();
     ble_init();
-    uart_set_rx_handler(handle_message);
+    tusb_init();
 
-    // BTstack run loop
-    btstack_run_loop_execute();
+    absolute_time_t next_button_press = make_timeout_time_ms(1000);
+    bool button_pressed = false;
+
+    while (true) {
+        tud_task();
+        btstack_run_loop_base_poll_data_sources();
+        serial_task();
+        
+        // Handle periodic button A press
+        if (time_reached(next_button_press)) {
+            hid_gamepad_report_t report = {
+                .x = 0, .y = 0, .z = 0, .rz = 0, .rx = 0, .ry = 0,
+                .hat = 0, .buttons = button_pressed ? 0 : GAMEPAD_BUTTON_A
+            };
+            
+            if (tud_hid_ready()) {
+                tud_hid_report(0, &report, sizeof(report));
+            }
+            
+            button_pressed = !button_pressed;
+            next_button_press = make_timeout_time_ms(button_pressed ? 100 : 900); // Press for 100ms, release for 900ms
+        }
+
+        if ((or_items > 0) && (tud_hid_n_ready(0))) {
+            tud_hid_n_report(0, outgoing_reports[or_head].report_id, outgoing_reports[or_head].data, outgoing_reports[or_head].len);
+            or_head = (or_head + 1) % OR_BUFSIZE;
+            or_items--;
+        }
+    }
 
     return 0;
 }

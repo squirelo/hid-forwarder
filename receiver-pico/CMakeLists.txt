@@ -10,6 +10,9 @@ set(PICO_SDK_PATH "${CMAKE_CURRENT_LIST_DIR}/pico-sdk")
 # Configure CYW43 architecture
 set(PICO_CYW43_ARCH_THREADSAFE_BACKGROUND 1)
 
+# Enable TinyUSB
+# set(PICO_ENABLE_USB 1)
+
 include(pico_sdk_import.cmake)
 
 project(receiver)
@@ -19,6 +22,7 @@ pico_sdk_init()
 add_executable(receiver
     src/receiver.c
     src/crc.c
+    src/descriptors.c
     src/globals.c
 )
 target_include_directories(receiver PRIVATE src)
@@ -29,13 +33,15 @@ target_include_directories(receiver PRIVATE
 )
 target_link_libraries(receiver
     pico_stdlib
-    pico_cyw43_arch_lwip_threadsafe_background
+    tinyusb_device
+    tinyusb_board
     pico_btstack_ble
     pico_btstack_cyw43
     hardware_flash
     hardware_gpio
     hardware_uart
     hardware_sync
+    $<$<BOOL:${PICO_CYW43_SUPPORTED}>:pico_cyw43_arch_lwip_poll>
 )
 pico_add_extra_outputs(receiver)
 
