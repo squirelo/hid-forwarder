@@ -30,20 +30,20 @@
 
 // Nordic UART Service UUID
 static const uint8_t nordic_uart_service_uuid[] = {
-    0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0,
-    0x93, 0xF3, 0xA3, 0xB5, 0x01, 0x00, 0x40, 0x6E
+    0x6E, 0x40, 0x00, 0x01, 0xB5, 0xA3, 0xF3, 0x93,
+    0xE0, 0xA9, 0xE5, 0x0E, 0x24, 0xDC, 0xCA, 0x9E
 };
 
 // Nordic UART RX UUID
 static const uint8_t nordic_uart_rx_uuid[] = {
-    0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0,
-    0x93, 0xF3, 0xA3, 0xB5, 0x02, 0x00, 0x40, 0x6E
+    0x6E, 0x40, 0x00, 0x02, 0xB5, 0xA3, 0xF3, 0x93,
+    0xE0, 0xA9, 0xE5, 0x0E, 0x24, 0xDC, 0xCA, 0x9E
 };
 
 // Nordic UART TX UUID
 static const uint8_t nordic_uart_tx_uuid[] = {
-    0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0,
-    0x93, 0xF3, 0xA3, 0xB5, 0x03, 0x00, 0x40, 0x6E
+    0x6E, 0x40, 0x00, 0x03, 0xB5, 0xA3, 0xF3, 0x93,
+    0xE0, 0xA9, 0xE5, 0x0E, 0x24, 0xDC, 0xCA, 0x9E
 };
 
 #define PERSISTED_CONFIG_SIZE 4096
@@ -173,6 +173,24 @@ static int att_write_callback(hci_con_handle_t connection_handle, uint16_t att_h
     return 0;
 }
 
+// Add new advertising data definitions
+static uint8_t adv_data[] = {
+    // Flags (3 bytes)
+    0x02, 0x01, 0x06,
+    // Service UUID (17 bytes)
+    0x11, 0x07, 
+    0x6E, 0x40, 0x00, 0x01, 0xB5, 0xA3, 0xF3, 0x93,
+    0xE0, 0xA9, 0xE5, 0x0E, 0x24, 0xDC, 0xCA, 0x9E,
+    // Local name (7 bytes)
+    0x06, 0x09, 'P', 'i', 'c', 'o', 'W'
+};
+
+static uint8_t scan_resp_data[] = {
+    // Complete local name
+    0x06, 0x09, 'P', 'i', 'c', 'o', 'W'
+};
+
+// Update ble_init function
 void ble_init(void) {
     printf("Starting BLE initialization...\n");
 
@@ -213,18 +231,20 @@ void ble_init(void) {
     // Initialize ATT Server
     att_server_init(profile_data, att_read_callback, att_write_callback);    
 
-    // Setup advertisements with simplified parameters
-    uint8_t adv_data[] = {
-        // Length of this data
-        0x02,
-        // AD Type: Flags
-        0x01,
-        // Flags: LE General Discoverable Mode and BR/EDR Not Supported
-        0x06
-    };
-    
-    gap_advertisements_set_params(0x0030, 0x0030, 0, 0, NULL, 0x07, 0x00);
+    // Setup advertisements with complete parameters
+    gap_advertisements_set_params(0x0100,    // adv_int_min
+                                0x0100,      // adv_int_max
+                                0,           // ADV_IND type (0 in BTstack)
+                                0,           // Public address type
+                                NULL,        // No direct address
+                                0x07,        // Primary advertising channels (all)
+                                0);          // No filter policy
+
+    // Set advertisement data and scan response
     gap_advertisements_set_data(sizeof(adv_data), adv_data);
+    gap_scan_response_set_data(sizeof(scan_resp_data), scan_resp_data);
+    
+    // Enable advertisements
     gap_advertisements_enable(1);
 
     // Register for ATT events
