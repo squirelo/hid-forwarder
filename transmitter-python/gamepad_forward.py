@@ -12,6 +12,8 @@ for controller in controller_manager.get_controllers():
     if not ("HID Receiver" in controller.device.name):
         controller.open()
 
+prev_data = bytes()
+
 
 @controller_manager.event
 def on_connect(controller):
@@ -54,7 +56,11 @@ def update(dt):
     gamepad.ly = int(max(0, min(255, gamepad.ly)))
     gamepad.rx = int(max(0, min(255, gamepad.rx)))
     gamepad.ry = int(max(0, min(255, gamepad.ry)))
-    transmitter.send(gamepad.get_data())
+    global prev_data
+    data = gamepad.get_data()
+    if data != prev_data:
+        transmitter.send(gamepad.get_data())
+        prev_data = data
 
 
 pyglet.clock.schedule_interval(update, 0.01)
