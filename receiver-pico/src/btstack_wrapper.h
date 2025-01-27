@@ -13,6 +13,9 @@
 #define _BTSTACK_HID_PARSER_H
 #define __BTSTACK_HID_PARSER_H__
 
+// Define BLE advertising types
+#define ADV_IND 0x00
+
 // Only include the BTstack headers we actually need
 #include <stdint.h>
 #include "btstack_defines.h"
