@@ -9,6 +9,8 @@ const COMMAND_FORGET_ALL_DEVICES = 2;
 const BLUETOOTH_ENABLED_FLAG_MASK = (1 << 0);
 
 let device = null;
+let bleDevice = null;
+let bleServer = null;
 
 document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("open_device").addEventListener("click", open_device);
@@ -16,6 +18,7 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("save_to_device").addEventListener("click", save_to_device);
     document.getElementById("pair_new_device").addEventListener("click", pair_new_device);
     document.getElementById("forget_all_devices").addEventListener("click", forget_all_devices);
+    document.getElementById("connect_ble").addEventListener("click", connect_ble_device);
 
     device_buttons_set_disabled_state(true);
 
@@ -23,6 +26,11 @@ document.addEventListener("DOMContentLoaded", function () {
         navigator.hid.addEventListener('disconnect', hid_on_disconnect);
     } else {
         display_error("Your browser doesn't support WebHID. Try Chrome (desktop version) or a Chrome-based browser.");
+    }
+
+    // Check if Web Bluetooth is supported
+    if (!navigator.bluetooth) {
+        display_error("Web Bluetooth is not supported in your browser");
     }
 });
 
@@ -198,4 +206,77 @@ async function pair_new_device() {
 
 async function forget_all_devices() {
     await send_feature_command(COMMAND_FORGET_ALL_DEVICES);
+}
+
+async function connect_ble_device() {
+    try {
+        clear_error();
+        
+        // Request BLE devices with PicoWG in their name
+        bleDevice = await navigator.bluetooth.requestDevice({
+            filters: [{
+                namePrefix: 'PicoWG'
+            }],
+            optionalServices: [
+                '0000180a-0000-1000-8000-00805f9b34fb',
+                '00001812-0000-1000-8000-00805f9b34fb',
+                '9e400000-b5a3-f393-e0a9-e50e24dcca9e'
+            ]
+        });
+
+        // Add event listener for disconnection
+        bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+
+        // Connect to the device
+        console.log('Connecting to GATT Server...');
+        bleServer = await bleDevice.gatt.connect();
+
+        // Get all services
+        const services = await bleServer.getPrimaryServices();
+        
+        // Create a list to show the services
+        let serviceList = document.createElement('ul');
+        for (const service of services) {
+            const serviceLi = document.createElement('li');
+            serviceLi.textContent = `Service: ${service.uuid}`;
+            
+            // Get characteristics for each service
+            const characteristics = await service.getCharacteristics();
+            if (characteristics.length > 0) {
+                const charList = document.createElement('ul');
+                for (const characteristic of characteristics) {
+                    const charLi = document.createElement('li');
+                    charLi.textContent = `Characteristic: ${characteristic.uuid}
+                        Properties: ${Object.keys(characteristic.properties).filter(p => characteristic.properties[p]).join(', ')}`;
+                    charList.appendChild(charLi);
+                }
+                serviceLi.appendChild(charList);
+            }
+            serviceList.appendChild(serviceLi);
+        }
+
+        // Add the list to the page
+        const servicesDiv = document.getElementById('ble_services') || document.createElement('div');
+        servicesDiv.id = 'ble_services';
+        servicesDiv.innerHTML = '<h3>BLE Services:</h3>';
+        servicesDiv.appendChild(serviceList);
+        document.body.appendChild(servicesDiv);
+
+        console.log('Connected to device:', bleDevice.name);
+    } catch (error) {
+        console.error('Error:', error);
+        display_error(error);
+    }
+}
+
+function onDisconnected() {
+    console.log('Device disconnected');
+    bleDevice = null;
+    bleServer = null;
+    
+    // Clear the services list
+    const servicesDiv = document.getElementById('ble_services');
+    if (servicesDiv) {
+        servicesDiv.remove();
+    }
 }

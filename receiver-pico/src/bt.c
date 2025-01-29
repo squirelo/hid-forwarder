@@ -176,8 +176,8 @@ void bt_init(void) {
 
     gap_advertisements_set_params(adv_int_min, adv_int_max, adv_type, 0, null_addr, 0x07, 0x00);
 
-    // Start with pairing mode disabled
-    bt_set_pairing_mode(false);
+    // Start with pairing mode enabled
+    bt_set_pairing_mode(true);
 
     // Turn on Bluetooth
     hci_power_control(HCI_POWER_ON);
