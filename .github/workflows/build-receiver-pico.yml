@@ -1,0 +1,48 @@
+name: build-receiver-pico
+on:
+  push:
+    paths:
+      - 'receiver-pico/**'
+  workflow_call:
+defaults:
+  run:
+    shell: bash --noprofile --norc -x -e -o pipefail {0}
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install compiler and libraries
+        run: |
+          sudo apt update
+          sudo apt install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
+      - name: Build
+        run: |
+          cd pico-sdk
+          git submodule update --init
+          cd ..
+          mkdir build-pico
+          cd build-pico
+          cmake ..
+          make
+          cd ..
+          mkdir build-pico2
+          cd build-pico2
+          PICO_BOARD=pico2 cmake ..
+          make
+          cd ..
+          mkdir build-pico_w
+          cd build-pico_w
+          PICO_BOARD=pico_w cmake ..
+          make
+          cd ..
+          mkdir artifacts
+          mv build-pico/receiver.uf2 artifacts/receiver_pico.uf2
+          mv build-pico2/receiver.uf2 artifacts/receiver_pico2.uf2
+          mv build-pico_w/receiver.uf2 artifacts/receiver_pico_w.uf2
+        working-directory: ./receiver-pico
+      - uses: actions/upload-artifact@v4
+        with:
+          path: receiver-pico/artifacts/*
