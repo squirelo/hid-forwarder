@@ -12,7 +12,9 @@ There are currently three protocols for communication between the transmitter an
 
 ## Receivers
 
-The receiver can either be a Raspberry Pi Pico running the [receiver_pico.uf2](receiver-pico/receiver_pico.uf2) firmware or a Pico W running the [receiver_pico_w.uf2](receiver-pico/receiver_pico_w.uf2) firmware. The Pico variant supports wired (serial) communication with the transmitter and the Pico W variant supports both wired and wireless (wifi and Bluetooth) communication.
+The receiver can either be a Raspberry Pi Pico running the [receiver_pico.uf2](https://github.com/jfedor2/hid-forwarder/releases/latest/download/receiver_pico.uf2) firmware or a Pico W running the [receiver_pico_w.uf2](https://github.com/jfedor2/hid-forwarder/releases/latest/download/receiver_pico_w.uf2) firmware. The Pico variant supports wired (serial) communication with the transmitter and the Pico W variant supports both wired and wireless (wifi and Bluetooth) communication.
+
+There are also firmware builds for the [Pico 2](https://github.com/jfedor2/hid-forwarder/releases/latest/download/receiver_pico2.uf2) and the [Pico 2 W](https://github.com/jfedor2/hid-forwarder/releases/latest/download/receiver_pico2_w.uf2).
 
 To configure the wifi on the wireless receiver or to enable Bluetooth and pair with a transmitter PC, use this web based [configuration tool](https://www.jfedor.org/hid-receiver-config/).
 
