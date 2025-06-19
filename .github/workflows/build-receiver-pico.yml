@@ -38,10 +38,16 @@ jobs:
           PICO_BOARD=pico_w cmake ..
           make
           cd ..
+          mkdir build-pico2_w
+          cd build-pico2_w
+          PICO_BOARD=pico2_w cmake ..
+          make
+          cd ..
           mkdir artifacts
           mv build-pico/receiver.uf2 artifacts/receiver_pico.uf2
           mv build-pico2/receiver.uf2 artifacts/receiver_pico2.uf2
           mv build-pico_w/receiver.uf2 artifacts/receiver_pico_w.uf2
+          mv build-pico2_w/receiver.uf2 artifacts/receiver_pico2_w.uf2
         working-directory: ./receiver-pico
       - uses: actions/upload-artifact@v4
         with:
