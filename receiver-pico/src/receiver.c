@@ -50,12 +50,6 @@
 
 #define BLUETOOTH_ENABLED_FLAG_MASK (1 << 0)
 
-// Bluetooth mode enumeration (like descriptors)
-typedef enum {
-    BT_MODE_CLASSIC = 0,  // Bluetooth Classic (RFCOMM/SPP)
-    BT_MODE_BLE = 1       // Bluetooth Low Energy
-} bt_mode_t;
-
 typedef struct __attribute__((packed)) {
     uint8_t config_version;
     uint8_t our_descriptor_number;
@@ -119,8 +113,8 @@ uint8_t or_items = 0;
 
 // Bluetooth mode names (like descriptor names)
 const char* bt_mode_names[] = {
-    "Classic",
-    "BLE"
+    "Classic",  // BT_MODE_CLASSIC
+    "BLE"       // BT_MODE_BLE
 };
 
 void queue_outgoing_report(uint8_t report_id, uint8_t* data, uint8_t len) {
