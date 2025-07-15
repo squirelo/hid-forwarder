@@ -95,15 +95,7 @@ bool wifi_connected = false;
 
 #endif
 
-config_t config = {
-    .config_version = CONFIG_VERSION,
-    .our_descriptor_number = 2,
-    .our_bt_mode = BT_MODE_CLASSIC,  // Default to Classic mode
-    .wifi_ssid = "",
-    .wifi_password = "",
-    .reserved = { 0 },
-    .crc = 0,
-};
+config_t config;
 
 #define OR_BUFSIZE 8
 outgoing_report_t outgoing_reports[OR_BUFSIZE];
@@ -282,11 +274,25 @@ bool command_ok(command_t* command) {
 }
 
 void config_init() {
+    // Initialize default config
+    config.config_version = CONFIG_VERSION;
+    config.our_descriptor_number = 2;
+    config.our_bt_mode = BT_MODE_CLASSIC;  // Default to Classic mode
+    strcpy(config.wifi_ssid, "");
+    strcpy(config.wifi_password, "");
+    config.flags = 0;
+    memset(config.reserved, 0, sizeof(config.reserved));
     config.crc = crc32((uint8_t*) &config, sizeof(config_t) - 4);
-    if (!config_ok((config_t*) FLASH_CONFIG_IN_MEMORY)) {
-        return;
+    
+    // Try to load from flash
+    if (config_ok((config_t*) FLASH_CONFIG_IN_MEMORY)) {
+        memcpy(&config, FLASH_CONFIG_IN_MEMORY, sizeof(config_t));
     }
-    memcpy(&config, FLASH_CONFIG_IN_MEMORY, sizeof(config_t));
+    
+    // Validate Bluetooth mode
+    if (config.our_bt_mode >= 2) {  // Only 0 (Classic) and 1 (BLE) are valid
+        config.our_bt_mode = BT_MODE_CLASSIC;  // Default to Classic if invalid
+    }
 }
 
 uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t* buffer, uint16_t reqlen) {
@@ -374,7 +380,9 @@ int main(void) {
     net_init();
 #endif
 #ifdef BLUETOOTH_ENABLED
-    if (config.flags & BLUETOOTH_ENABLED_FLAG_MASK) {
+    // Initialize Bluetooth if enabled via USB config or if we're in a Bluetooth mode
+    if ((config.flags & BLUETOOTH_ENABLED_FLAG_MASK) || 
+        (config.our_bt_mode == BT_MODE_CLASSIC || config.our_bt_mode == BT_MODE_BLE)) {
         bt_init();
     }
 #endif

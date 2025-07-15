@@ -1,0 +1,12 @@
+// HID Receiver GATT Profile
+// Includes Nordic SPP service for UART-like communication
+
+PRIMARY_SERVICE, GAP
+CHARACTERISTIC, DEVICE_NAME, READ, "HID Receiver"
+CHARACTERISTIC, APPEARANCE, READ, appearance_human_interface_device
+
+PRIMARY_SERVICE, GATT
+CHARACTERISTIC, SERVICE_CHANGED, INDICATE, 0x00, 0x00
+
+// Import Nordic SPP service
+IMPORT, nordic_spp_service.gatt 

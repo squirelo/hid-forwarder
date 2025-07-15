@@ -7,6 +7,8 @@
 #include "bt.h"
 #include "btstack.h"
 #include "receiver.h"
+#include "ble/gatt-service/nordic_spp_service_server.h"
+#include "hid_receiver.h"
 
 #define RFCOMM_SERVER_CHANNEL 1
 
@@ -121,13 +123,32 @@ static void ble_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t* p
                     }
                     break;
                     
+                case HCI_EVENT_GATTSERVICE_META:
+                    switch (hci_event_gattservice_meta_get_subevent_code(packet)) {
+                        case GATTSERVICE_SUBEVENT_SPP_SERVICE_CONNECTED:
+                            ble_connection_handle = gattservice_subevent_spp_service_connected_get_con_handle(packet);
+                            printf("Nordic SPP service connected\n");
+                            ble_connected = true;
+                            break;
+                            
+                        case GATTSERVICE_SUBEVENT_SPP_SERVICE_DISCONNECTED:
+                            printf("Nordic SPP service disconnected\n");
+                            ble_connected = false;
+                            ble_connection_handle = 0;
+                            break;
+                            
+                        default:
+                            break;
+                    }
+                    break;
+                    
                 default:
                     break;
             }
             break;
             
-        case L2CAP_DATA_PACKET:
-            // Handle BLE data packets
+        case RFCOMM_DATA_PACKET:
+            // Handle Nordic SPP data packets (same as RFCOMM for compatibility)
             for (int i = 0; i < size; i++) {
                 serial_read_byte(packet[i], 0);
             }
@@ -176,12 +197,26 @@ static void ble_setup(void) {
     l2cap_init();
     sm_init();
     
-    // Setup GATT server for HID service
-    // (You'll need to implement the HID GATT service here)
+    // Setup ATT server with compiled GATT profile
+    att_server_init(profile_data, NULL, NULL);
     
-    // Start advertising
+    // Setup Nordic SPP service (UART-like service)
+    nordic_spp_service_server_init(&ble_packet_handler);
+    
+    // Start advertising with Nordic SPP service UUID
     gap_advertisements_set_params(0x0020, 0x0020, 0, 0, NULL, 0x07, 0x00);
-    gap_advertisements_set_data(0x0F, NULL, 0, NULL, 0);
+    
+    // Set advertising data with Nordic SPP service UUID
+    uint8_t adv_data[] = {
+        // Flags general discoverable, BR/EDR not supported
+        2, BLUETOOTH_DATA_TYPE_FLAGS, 0x06,
+        // Name
+        12, BLUETOOTH_DATA_TYPE_COMPLETE_LOCAL_NAME, 'H', 'I', 'D', ' ', 'R', 'e', 'c', 'e', 'i', 'v', 'e', 'r',
+        // Nordic SPP Service UUID: 6E400001-B5A3-F393-E0A9-E50E24DCCA9E
+        17, BLUETOOTH_DATA_TYPE_COMPLETE_LIST_OF_128_BIT_SERVICE_CLASS_UUIDS, 
+        0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0, 0x93, 0xf3, 0xa3, 0xb5, 0x01, 0x00, 0x40, 0x6e,
+    };
+    gap_advertisements_set_data(sizeof(adv_data), adv_data, 0, NULL, 0);
     gap_advertisements_enable(1);
 }
 
@@ -250,9 +285,8 @@ int bt_send_data(const uint8_t* data, uint16_t length) {
             
         case BT_MODE_BLE:
             if (ble_connected && ble_connection_handle) {
-                // Send via BLE GATT characteristic
-                // (You'll need to implement this based on your GATT service)
-                return 0;
+                // Send via Nordic SPP service
+                return nordic_spp_service_server_send(ble_connection_handle, (uint8_t*)data, length);
             }
             break;
             
