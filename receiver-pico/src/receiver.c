@@ -36,7 +36,7 @@
 #define OUR_PORT 42734
 #endif
 
-#define CONFIG_VERSION 2
+#define CONFIG_VERSION 3  // Increment version for Bluetooth config
 #define PROTOCOL_VERSION 1
 
 #define SERIAL_UART uart1
@@ -50,13 +50,20 @@
 
 #define BLUETOOTH_ENABLED_FLAG_MASK (1 << 0)
 
+// Bluetooth mode enumeration (like descriptors)
+typedef enum {
+    BT_MODE_CLASSIC = 0,  // Bluetooth Classic (RFCOMM/SPP)
+    BT_MODE_BLE = 1       // Bluetooth Low Energy
+} bt_mode_t;
+
 typedef struct __attribute__((packed)) {
     uint8_t config_version;
     uint8_t our_descriptor_number;
+    uint8_t our_bt_mode;  // Add Bluetooth mode like descriptor number
     char wifi_ssid[20];
     char wifi_password[24];
     uint8_t flags;
-    uint8_t reserved[12];
+    uint8_t reserved[11];  // Reduced by 1 for bt_mode
     uint32_t crc;
 } config_t;
 
@@ -97,6 +104,7 @@ bool wifi_connected = false;
 config_t config = {
     .config_version = CONFIG_VERSION,
     .our_descriptor_number = 2,
+    .our_bt_mode = BT_MODE_CLASSIC,  // Default to Classic mode
     .wifi_ssid = "",
     .wifi_password = "",
     .reserved = { 0 },
@@ -108,6 +116,12 @@ outgoing_report_t outgoing_reports[OR_BUFSIZE];
 uint8_t or_head = 0;
 uint8_t or_tail = 0;
 uint8_t or_items = 0;
+
+// Bluetooth mode names (like descriptor names)
+const char* bt_mode_names[] = {
+    "Classic",
+    "BLE"
+};
 
 void queue_outgoing_report(uint8_t report_id, uint8_t* data, uint8_t len) {
     if (or_items == OR_BUFSIZE) {
