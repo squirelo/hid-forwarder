@@ -28,6 +28,14 @@
 #include "descriptors.h"
 #include "globals.h"
 
+// Bluetooth mode constants (defined here so they're available even when BLUETOOTH_ENABLED is not set)
+#ifndef BT_MODE_CLASSIC
+#define BT_MODE_CLASSIC 0
+#endif
+#ifndef BT_MODE_BLE
+#define BT_MODE_BLE 1
+#endif
+
 #define PERSISTED_CONFIG_SIZE 4096
 #define CONFIG_OFFSET_IN_FLASH (PICO_FLASH_SIZE_BYTES - 16384)
 #define FLASH_CONFIG_IN_MEMORY (((uint8_t*) XIP_BASE) + CONFIG_OFFSET_IN_FLASH)
