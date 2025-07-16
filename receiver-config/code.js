@@ -1,6 +1,6 @@
 import crc32 from './crc.js';
 
-const CONFIG_VERSION = 2;
+const CONFIG_VERSION = 3; // Updated to match firmware
 const CONFIG_SIZE = 63;
 const REPORT_ID_CONFIG = 1;
 const REPORT_ID_COMMAND = 2;
@@ -65,6 +65,7 @@ async function load_from_device() {
         check_received_version(config_version);
 
         document.getElementById("our_descriptor_number_dropdown").value = data.getUint8(pos++);
+        document.getElementById("bluetooth_mode_dropdown").value = data.getUint8(pos++); // our_bt_mode
 
         let ssid = '';
         for (let i = 0; i < 20; i++) {
@@ -99,6 +100,7 @@ async function save_to_device() {
         dataview.setUint8(0, CONFIG_VERSION);
         let pos = 1;
         dataview.setUint8(pos++, get_int("our_descriptor_number_dropdown", "our_descriptor_number"));
+        dataview.setUint8(pos++, get_int("bluetooth_mode_dropdown", "bluetooth mode")); // our_bt_mode
 
         const ssid = document.getElementById("wifi_ssid_input").value;
         if (ssid.length > 19) {
@@ -121,7 +123,7 @@ async function save_to_device() {
         const flags = document.getElementById("bluetooth_enabled_checkbox").checked ? BLUETOOTH_ENABLED_FLAG_MASK : 0;
         dataview.setUint8(pos++, flags);
 
-        for (let i = 0; i < 12; i++) {
+        for (let i = 0; i < 11; i++) { // reserved is now 11 bytes
             dataview.setUint8(pos++, 0);
         }
 

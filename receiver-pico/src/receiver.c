@@ -274,14 +274,20 @@ bool command_ok(command_t* command) {
 }
 
 void config_init() {
-    // Initialize default config
-    config.config_version = CONFIG_VERSION;
-    config.our_descriptor_number = 2;
-    config.our_bt_mode = BT_MODE_CLASSIC;  // Default to Classic mode
-    strcpy(config.wifi_ssid, "");
-    strcpy(config.wifi_password, "");
-    config.flags = 0;
-    memset(config.reserved, 0, sizeof(config.reserved));
+    // Initialize default config with proper struct initialization
+    config_t default_config = {
+        .config_version = CONFIG_VERSION,
+        .our_descriptor_number = 2,
+        .our_bt_mode = BT_MODE_CLASSIC,  // Default to Classic mode
+        .wifi_ssid = "",
+        .wifi_password = "",
+        .flags = 0,
+        .reserved = { 0 },
+        .crc = 0,
+    };
+    
+    // Copy default config
+    config = default_config;
     config.crc = crc32((uint8_t*) &config, sizeof(config_t) - 4);
     
     // Try to load from flash
@@ -372,6 +378,7 @@ int main(void) {
     if (our_descriptor_number >= NOUR_DESCRIPTORS) {
         our_descriptor_number = 0;
     }
+    our_bt_mode = config.our_bt_mode;
     serial_init();
 #if (defined(NETWORK_ENABLED) || defined(BLUETOOTH_ENABLED))
     cyw43_arch_init();

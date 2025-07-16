@@ -216,7 +216,7 @@ static void ble_setup(void) {
         17, BLUETOOTH_DATA_TYPE_COMPLETE_LIST_OF_128_BIT_SERVICE_CLASS_UUIDS, 
         0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0, 0x93, 0xf3, 0xa3, 0xb5, 0x01, 0x00, 0x40, 0x6e,
     };
-    gap_advertisements_set_data(sizeof(adv_data), adv_data, 0, NULL, 0);
+    gap_advertisements_set_data(sizeof(adv_data), adv_data);
     gap_advertisements_enable(1);
 }
 
@@ -226,9 +226,9 @@ void bt_init(void) {
         return;
     }
     
-    // Get mode from receiver.c configuration
-    extern config_t config;
-    current_mode = (bt_mode_t)config.our_bt_mode;
+    // Get mode from receiver.c configuration - need to declare extern
+    extern uint8_t our_bt_mode;
+    current_mode = (bt_mode_t)our_bt_mode;
     
     // Initialize based on mode
     switch (current_mode) {
@@ -319,7 +319,8 @@ void bt_disconnect(void) {
     }
     
     if (ble_connected && ble_connection_handle) {
-        hci_disconnect(ble_connection_handle);
+        // Use hci_send_cmd with HCI_OPCODE_HCI_DISCONNECT
+        hci_send_cmd(&hci_disconnect, ble_connection_handle, ERROR_CODE_REMOTE_USER_TERMINATED_CONNECTION);
     }
 }
 

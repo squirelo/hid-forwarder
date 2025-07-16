@@ -29,7 +29,7 @@ New-Item -ItemType Directory -Name "build"
 
 # Run the build using Docker without git submodules
 Write-Host "Starting Docker build..." -ForegroundColor Yellow
-docker run --rm -v "${PWD}:/workspace" -w /workspace ubuntu:22.04 bash -c "apt-get update && apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib cmake git make python3 ca-certificates g++ && git config --global http.sslVerify false && mkdir -p build-pico_w && cd build-pico_w && PICO_BOARD=pico_w cmake .. && make -j4 && cd .. && mkdir -p artifacts && cp build-pico_w/receiver.uf2 artifacts/receiver_pico_w.uf2 && echo 'Build completed successfully!' && echo 'Firmware files:' && ls -la artifacts/"
+docker run --rm -v "${PWD}:/workspace" -w /workspace ubuntu:22.04 bash -c "apt-get update && apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib cmake git make python3 ca-certificates g++ python3-pip && git config --global http.sslVerify false && pip3 install pycryptodome && mkdir -p build-pico_w && cd build-pico_w && PICO_BOARD=pico_w cmake .. && make -j4 && cd .. && mkdir -p artifacts && cp build-pico_w/receiver.uf2 artifacts/receiver_pico_w.uf2 && echo 'Build completed successfully!' && echo 'Firmware files:' && ls -la artifacts/"
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "Build completed successfully!" -ForegroundColor Green
