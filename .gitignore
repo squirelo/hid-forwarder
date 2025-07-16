@@ -1,4 +1,9 @@
 /receiver-pico/build
+/receiver-pico/build-pico/
+/receiver-pico/build-pico-w/
+/receiver-pico/build-pico2/
+/receiver-pico/build-pico2-w/
+/receiver-pico/artifacts/
 /transmitter-ble-web/build
 /transmitter-ble-web/node_modules
 /transmitter-ble-web/package-lock.json
