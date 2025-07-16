@@ -7,7 +7,7 @@
 #define ENABLE_PRINTF_HEXDUMP
 #define ENABLE_SCO_OVER_HCI
 
-// Enable Bluetooth Classic and BLEs
+// Enable Bluetooth Classic and BLE
 #define ENABLE_CLASSIC
 #define ENABLE_BLE
 
