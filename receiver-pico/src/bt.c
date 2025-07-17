@@ -16,7 +16,7 @@
 static bt_mode_t current_mode = BT_MODE_CLASSIC;
 static bool bt_initialized = false;
 
-// Classic Bluetooth state
+// Classic Bluetooth 
 static uint16_t rfcomm_channel_id = 0;
 static bool classic_connected = false;
 
