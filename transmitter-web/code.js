@@ -23,16 +23,36 @@ let output;
 let statusElement;
 let connectButton;
 let disconnectButton;
+let sendButtonA;
 let isConnected = false;
+
+// Device info storage
+let deviceName = "HID Receiver";
+let deviceId = "";
+
+// Button A toggle state
+let buttonAToggled = false;
+
+// Keep-alive variables
+let keepAliveInterval = null;
+let lastKeepAliveTime = 0;
+const KEEP_ALIVE_INTERVAL = 2000; // Send keep-alive every 2 seconds (more frequent)
+
+// Connection monitoring
+let connectionMonitorInterval = null;
+let lastSuccessfulKeepAlive = 0;
+const CONNECTION_TIMEOUT = 8000; // 8 seconds without keep-alive = disconnected (more responsive)
 
 document.addEventListener("DOMContentLoaded", function () {
     output = document.getElementById("output");
     statusElement = document.getElementById("status");
     connectButton = document.getElementById("connect_device");
     disconnectButton = document.getElementById("disconnect_device");
+    sendButtonA = document.getElementById("send_button_a");
     
     connectButton.addEventListener("click", connectToDevice);
     disconnectButton.addEventListener("click", disconnectFromDevice);
+    sendButtonA.addEventListener("click", sendButtonACommand);
     
     // Check if Web Bluetooth is supported
     if (!navigator.bluetooth) {
@@ -40,6 +60,9 @@ document.addEventListener("DOMContentLoaded", function () {
         connectButton.disabled = true;
         return;
     }
+    
+    // Handle page visibility changes to prevent disconnections
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     
     setInterval(loop, 8);
 });
@@ -68,6 +91,10 @@ async function connectToDevice() {
         
         updateStatus("Connecting to " + device.name + "...", false);
         write("Selected device: " + device.name + " (ID: " + device.id + ")\n");
+        
+        // Store device info
+        deviceName = device.name || "HID Receiver";
+        deviceId = device.id || "";
         
         // Connect to GATT server
         server = await device.gatt.connect();
@@ -190,11 +217,15 @@ async function connectToDevice() {
         device.addEventListener('gattserverdisconnected', onDisconnected);
         
         isConnected = true;
-        updateStatus("Connected to " + device.name, true);
+        updateStatus("Connected to " + deviceName, true);
         connectButton.disabled = true;
         disconnectButton.disabled = false;
+        sendButtonA.disabled = false;
         
-        write("🎉 Successfully connected to " + device.name + "!\n");
+        // Start keep-alive to maintain connection
+        startKeepAlive();
+        
+        write("🎉 Successfully connected to " + deviceName + "!\n");
         // write("Using service: " + detectedServiceUuid + "\n"); // This line is removed as per the new_code
         write("TX characteristic: " + NORDIC_SPP_TX_CHAR_UUID + "\n");
         write("RX characteristic: " + NORDIC_SPP_RX_CHAR_UUID + "\n");
@@ -205,6 +236,7 @@ async function connectToDevice() {
         updateStatus("Connection failed: " + error.message, false);
         connectButton.disabled = false;
         disconnectButton.disabled = true;
+        sendButtonA.disabled = true;
         isConnected = false;
         write("💥 Connection failed: " + error.message + "\n");
     }
@@ -212,6 +244,9 @@ async function connectToDevice() {
 
 async function disconnectFromDevice() {
     try {
+        // Stop keep-alive first
+        stopKeepAlive();
+        
         if (server && server.connected) {
             await server.disconnect();
         }
@@ -220,12 +255,221 @@ async function disconnectFromDevice() {
     }
 }
 
+async function sendButtonACommand() {
+    if (!isConnected || !txCharacteristic) {
+        write("❌ Not connected to device\n");
+        return;
+    }
+
+    try {
+        // Toggle button A state
+        buttonAToggled = !buttonAToggled;
+        
+        // Create a HID report with button A state
+        let report = new Uint8Array(8);
+        report[0] = buttonAToggled ? 0x02 : 0x00;  // Button A (bit 1) pressed or released
+        report[1] = 0x00;  // No other buttons
+        report[2] = 0x08;  // D-pad neutral position
+        report[3] = 128;   // Left stick X center
+        report[4] = 128;   // Left stick Y center
+        report[5] = 128;   // Right stick X center
+        report[6] = 128;   // Right stick Y center
+        report[7] = 0x00;  // Reserved
+
+        const action = buttonAToggled ? "PRESSED" : "RELEASED";
+        write("🎮 Button A " + action + "...\n");
+        await sendReport(report);
+        write("✅ Button A " + action + "\n");
+        
+        // Update button text
+        sendButtonA.textContent = buttonAToggled ? "Release Button A" : "Send Button A";
+        
+    } catch (error) {
+        console.error('Failed to send button A command:', error);
+        write("❌ Error sending button A command: " + error.message + "\n");
+    }
+}
+
+async function sendKeepAlive() {
+    if (!isConnected || !txCharacteristic) {
+        return;
+    }
+
+    try {
+        // Send a minimal keep-alive packet (empty report)
+        let report = new Uint8Array(8);
+        report.fill(0); // All zeros - neutral state
+        
+        // Create packet with header and CRC
+        let data = new Uint8Array(4 + 8 + 4);
+        data[0] = 0x00;   // Keep-alive packet type
+        data[1] = 0x02;   // Version
+        data[2] = 0x08;   // Payload length
+        data[3] = 0x00;   // Reserved
+        data.set(report, 4);
+        
+        // Calculate CRC32
+        const crc = crc32(new DataView(data.buffer), 12);
+        data[12] = (crc >> 0) & 0xFF;
+        data[13] = (crc >> 8) & 0xFF;
+        data[14] = (crc >> 16) & 0xFF;
+        data[15] = (crc >> 24) & 0xFF;
+
+        // Encode with SLIP protocol
+        const encodedData = encodeSlipPacket(data);
+        
+        // Send via BLE with retry logic
+        let retries = 3;
+        while (retries > 0) {
+            try {
+                await txCharacteristic.writeValue(encodedData);
+                lastKeepAliveTime = Date.now();
+                lastSuccessfulKeepAlive = Date.now();
+                break; // Success, exit retry loop
+            } catch (error) {
+                retries--;
+                if (retries === 0) {
+                    throw error; // Re-throw if all retries failed
+                }
+                // Wait a bit before retry
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+        }
+        
+    } catch (error) {
+        console.error('Keep-alive failed:', error);
+        // Check if this is a connection error
+        if (error.message.includes('disconnected') || error.message.includes('not connected')) {
+            write("⚠️ Keep-alive failed - connection may be lost\n");
+        }
+    }
+}
+
+function startKeepAlive() {
+    if (keepAliveInterval) {
+        clearInterval(keepAliveInterval);
+    }
+    
+    keepAliveInterval = setInterval(async () => {
+        if (isConnected) {
+            await sendKeepAlive();
+        }
+    }, KEEP_ALIVE_INTERVAL);
+    
+    // Start connection monitoring
+    startConnectionMonitoring();
+    
+    write("🔋 Keep-alive started (every " + (KEEP_ALIVE_INTERVAL/1000) + "s)\n");
+}
+
+function stopKeepAlive() {
+    if (keepAliveInterval) {
+        clearInterval(keepAliveInterval);
+        keepAliveInterval = null;
+        write("🔋 Keep-alive stopped\n");
+    }
+    
+    // Stop connection monitoring
+    stopConnectionMonitoring();
+}
+
+function startConnectionMonitoring() {
+    if (connectionMonitorInterval) {
+        clearInterval(connectionMonitorInterval);
+    }
+    
+    connectionMonitorInterval = setInterval(async () => {
+        if (isConnected && lastSuccessfulKeepAlive > 0) {
+            const timeSinceLastKeepAlive = Date.now() - lastSuccessfulKeepAlive;
+            if (timeSinceLastKeepAlive > CONNECTION_TIMEOUT) {
+                write("⚠️ Connection timeout detected (" + (timeSinceLastKeepAlive/1000) + "s)\n");
+                write("🔄 Attempting to reconnect...\n");
+                
+                // Try to reconnect
+                try {
+                    if (server && !server.connected) {
+                        await server.connect();
+                        write("✅ Reconnected successfully\n");
+                        lastSuccessfulKeepAlive = Date.now(); // Reset timer
+                    } else {
+                        // Force disconnect and let the disconnection handler deal with it
+                        if (server && server.connected) {
+                            await server.disconnect();
+                        }
+                    }
+                } catch (error) {
+                    write("❌ Reconnection failed: " + error.message + "\n");
+                    // Force disconnect to trigger proper cleanup
+                    if (server && server.connected) {
+                        await server.disconnect();
+                    }
+                }
+            }
+        }
+    }, 3000); // Check every 3 seconds (more frequent)
+    
+    write("🔍 Connection monitoring started (checking every 3s)\n");
+}
+
+function stopConnectionMonitoring() {
+    if (connectionMonitorInterval) {
+        clearInterval(connectionMonitorInterval);
+        connectionMonitorInterval = null;
+        write("🔍 Connection monitoring stopped\n");
+    }
+}
+
+async function checkConnectionHealth() {
+    if (!isConnected || !server) {
+        return false;
+    }
+    
+    try {
+        // Try to read a characteristic to test connection
+        if (txCharacteristic && txCharacteristic.properties.read) {
+            await txCharacteristic.readValue();
+            return true;
+        }
+        return server.connected;
+    } catch (error) {
+        console.error('Connection health check failed:', error);
+        return false;
+    }
+}
+
 function onDisconnected() {
-    isConnected = false;
-    updateStatus("Disconnected", false);
-    connectButton.disabled = false;
-    disconnectButton.disabled = true;
-    write("Device disconnected\n");
+    write("📱 Device disconnected event triggered\n");
+    
+    // Check if this is a real disconnection or just a temporary issue
+    setTimeout(async () => {
+        const isHealthy = await checkConnectionHealth();
+        if (!isHealthy) {
+            isConnected = false;
+            updateStatus("Disconnected", false);
+            connectButton.disabled = false;
+            disconnectButton.disabled = true;
+            sendButtonA.disabled = true;
+            
+            // Reset button A state
+            buttonAToggled = false;
+            sendButtonA.textContent = "Send Button A";
+            
+            // Stop keep-alive
+            stopKeepAlive();
+            
+            write("❌ Confirmed disconnection from " + deviceName + "\n");
+        } else {
+            write("✅ Connection is still healthy, ignoring disconnection event\n");
+        }
+    }, 1000); // Wait 1 second to see if it's a temporary issue
+}
+
+function handleVisibilityChange() {
+    if (document.hidden) {
+        write("📱 Page hidden - keeping connection alive\n");
+    } else {
+        write("📱 Page visible again\n");
+    }
 }
 
 function handleNotification(event) {
@@ -304,7 +548,7 @@ async function loop() {
         clear_output();
         
         if (isConnected) {
-            write("🟢 CONNECTED to " + (device?.name || "HID Receiver") + "\n\n");
+            write("🟢 CONNECTED to " + deviceName + "\n\n");
         } else {
             write("🔴 NOT CONNECTED\n\n");
         }
