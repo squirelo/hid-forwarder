@@ -18,6 +18,10 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y --no-install-recommends gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
+      - name: Install Python dependencies
+        run: |
+          sudo apt install -y python3-pip
+          pip3 install pycryptodome
       - name: Build
         run: |
           cd pico-sdk

@@ -28,6 +28,14 @@
 #include "descriptors.h"
 #include "globals.h"
 
+// Bluetooth mode constants (defined here so they're available even when BLUETOOTH_ENABLED is not set)
+#ifndef BT_MODE_CLASSIC
+#define BT_MODE_CLASSIC 0
+#endif
+#ifndef BT_MODE_BLE
+#define BT_MODE_BLE 1
+#endif
+
 #define PERSISTED_CONFIG_SIZE 4096
 #define CONFIG_OFFSET_IN_FLASH (PICO_FLASH_SIZE_BYTES - 16384)
 #define FLASH_CONFIG_IN_MEMORY (((uint8_t*) XIP_BASE) + CONFIG_OFFSET_IN_FLASH)
@@ -36,7 +44,7 @@
 #define OUR_PORT 42734
 #endif
 
-#define CONFIG_VERSION 2
+#define CONFIG_VERSION 3  // Increment version for Bluetooth config
 #define PROTOCOL_VERSION 1
 
 #define SERIAL_UART uart1
@@ -53,10 +61,11 @@
 typedef struct __attribute__((packed)) {
     uint8_t config_version;
     uint8_t our_descriptor_number;
+    uint8_t our_bt_mode;  // Add Bluetooth mode like descriptor number
     char wifi_ssid[20];
     char wifi_password[24];
     uint8_t flags;
-    uint8_t reserved[12];
+    uint8_t reserved[11];  // Reduced by 1 for bt_mode
     uint32_t crc;
 } config_t;
 
@@ -94,20 +103,19 @@ bool wifi_connected = false;
 
 #endif
 
-config_t config = {
-    .config_version = CONFIG_VERSION,
-    .our_descriptor_number = 2,
-    .wifi_ssid = "",
-    .wifi_password = "",
-    .reserved = { 0 },
-    .crc = 0,
-};
+config_t config;
 
 #define OR_BUFSIZE 8
 outgoing_report_t outgoing_reports[OR_BUFSIZE];
 uint8_t or_head = 0;
 uint8_t or_tail = 0;
 uint8_t or_items = 0;
+
+// Bluetooth mode names (like descriptor names)
+const char* bt_mode_names[] = {
+    "Classic",  // BT_MODE_CLASSIC
+    "BLE"       // BT_MODE_BLE
+};
 
 void queue_outgoing_report(uint8_t report_id, uint8_t* data, uint8_t len) {
     if (or_items == OR_BUFSIZE) {
@@ -274,11 +282,31 @@ bool command_ok(command_t* command) {
 }
 
 void config_init() {
+    // Initialize default config with proper struct initialization
+    config_t default_config = {
+        .config_version = CONFIG_VERSION,
+        .our_descriptor_number = 2,
+        .our_bt_mode = BT_MODE_CLASSIC,  // Default to Classic mode
+        .wifi_ssid = "",
+        .wifi_password = "",
+        .flags = 0,
+        .reserved = { 0 },
+        .crc = 0,
+    };
+    
+    // Copy default config
+    config = default_config;
     config.crc = crc32((uint8_t*) &config, sizeof(config_t) - 4);
-    if (!config_ok((config_t*) FLASH_CONFIG_IN_MEMORY)) {
-        return;
+    
+    // Try to load from flash
+    if (config_ok((config_t*) FLASH_CONFIG_IN_MEMORY)) {
+        memcpy(&config, FLASH_CONFIG_IN_MEMORY, sizeof(config_t));
     }
-    memcpy(&config, FLASH_CONFIG_IN_MEMORY, sizeof(config_t));
+    
+    // Validate Bluetooth mode
+    if (config.our_bt_mode >= 2) {  // Only 0 (Classic) and 1 (BLE) are valid
+        config.our_bt_mode = BT_MODE_CLASSIC;  // Default to Classic if invalid
+    }
 }
 
 uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t* buffer, uint16_t reqlen) {
@@ -358,6 +386,7 @@ int main(void) {
     if (our_descriptor_number >= NOUR_DESCRIPTORS) {
         our_descriptor_number = 0;
     }
+    our_bt_mode = config.our_bt_mode;
     serial_init();
 #if (defined(NETWORK_ENABLED) || defined(BLUETOOTH_ENABLED))
     cyw43_arch_init();
@@ -366,7 +395,9 @@ int main(void) {
     net_init();
 #endif
 #ifdef BLUETOOTH_ENABLED
-    if (config.flags & BLUETOOTH_ENABLED_FLAG_MASK) {
+    // Initialize Bluetooth if enabled via USB config or if we're in a Bluetooth mode
+    if ((config.flags & BLUETOOTH_ENABLED_FLAG_MASK) || 
+        (config.our_bt_mode == BT_MODE_CLASSIC || config.our_bt_mode == BT_MODE_BLE)) {
         bt_init();
     }
 #endif
