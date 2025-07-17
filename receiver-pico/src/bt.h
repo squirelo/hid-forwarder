@@ -8,8 +8,8 @@
 
 // Bluetooth mode enumeration
 typedef enum {
-    BT_MODE_CLASSIC = 0,  // Bluetooth Classic (RFCOMM/SPP)
-    BT_MODE_BLE = 1       // Bluetooth Low Energy
+    BT_MODE_CLASSIC = 0,
+    BT_MODE_BLE = 1
 } bt_mode_t;
 
 // Bluetooth initialization and management

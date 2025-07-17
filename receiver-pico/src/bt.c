@@ -15,12 +15,12 @@
 // Bluetooth state
 static bt_mode_t current_mode = BT_MODE_CLASSIC;
 static bool bt_initialized = false;
+static bool pairing_mode_enabled = false;
 
 // Classic Bluetooth 
 static uint16_t rfcomm_channel_id = 0;
 static bool classic_connected = false;
 
-// BLE state
 static bool ble_connected = false;
 static uint16_t ble_connection_handle = 0;
 
@@ -90,7 +90,6 @@ static void classic_packet_handler(uint8_t packet_type, uint16_t channel, uint8_
     }
 }
 
-// Packet handler for BLE
 static void ble_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t* packet, uint16_t size) {
     bd_addr_t event_addr;
     
@@ -148,7 +147,6 @@ static void ble_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t* p
             break;
             
         case RFCOMM_DATA_PACKET:
-            // Handle Nordic SPP data packets (same as RFCOMM for compatibility)
             for (int i = 0; i < size; i++) {
                 serial_read_byte(packet[i], 0);
             }
@@ -186,7 +184,6 @@ static void classic_setup(void) {
     sdp_register_service(spp_service_buffer);
 }
 
-// BLE setup
 static void ble_setup(void) {
     static btstack_packet_callback_registration_t hci_event_callback_registration;
 
@@ -200,19 +197,13 @@ static void ble_setup(void) {
     // Setup ATT server with compiled GATT profile
     att_server_init(profile_data, NULL, NULL);
     
-    // Setup Nordic SPP service (UART-like service)
     nordic_spp_service_server_init(&ble_packet_handler);
     
-    // Start advertising with Nordic SPP service UUID
     gap_advertisements_set_params(0x0020, 0x0020, 0, 0, NULL, 0x07, 0x00);
     
-    // Set advertising data with Nordic SPP service UUID
     uint8_t adv_data[] = {
-        // Flags general discoverable, BR/EDR not supported
         2, BLUETOOTH_DATA_TYPE_FLAGS, 0x06,
-        // Name
         12, BLUETOOTH_DATA_TYPE_COMPLETE_LOCAL_NAME, 'H', 'I', 'D', ' ', 'R', 'e', 'c', 'e', 'i', 'v', 'e', 'r',
-        // Nordic SPP Service UUID: 6E400001-B5A3-F393-E0A9-E50E24DCCA9E
         17, BLUETOOTH_DATA_TYPE_COMPLETE_LIST_OF_128_BIT_SERVICE_CLASS_UUIDS, 
         0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0, 0x93, 0xf3, 0xa3, 0xb5, 0x01, 0x00, 0x40, 0x6e,
     };
@@ -285,7 +276,6 @@ int bt_send_data(const uint8_t* data, uint16_t length) {
             
         case BT_MODE_BLE:
             if (ble_connected && ble_connection_handle) {
-                // Send via Nordic SPP service
                 return nordic_spp_service_server_send(ble_connection_handle, (uint8_t*)data, length);
             }
             break;
@@ -299,14 +289,13 @@ int bt_send_data(const uint8_t* data, uint16_t length) {
 
 // Pairing mode functions
 void bt_set_pairing_mode(bool enabled) {
+    pairing_mode_enabled = enabled;
     gap_discoverable_control(enabled);
     gap_ssp_set_auto_accept(enabled);
 }
 
 bool bt_get_pairing_mode(void) {
-    // This would need to track the pairing mode state
-    // For now, return false as default
-    return false;
+    return pairing_mode_enabled;
 }
 
 void bt_forget_all_devices(void) {
