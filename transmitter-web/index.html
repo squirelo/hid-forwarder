@@ -3,14 +3,96 @@
 
 <head>
     <script src="code.js" type="module"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        button {
+            background: #007acc;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 0;
+        }
+        
+        button:hover {
+            background: #005a9e;
+        }
+        
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        
+        .connected {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .disconnected {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        #output {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+    </style>
 </head>
 
 <body>
-    <h1>HID Transmitter</h1>
-    <p>
-        <button id="select_device">Select serial port</button>
-    </p>
-    <p>Keep this window visible.</p>
-    <pre id="output">
-    </pre>
+    <div class="container">
+        <h1>🎮 HID Transmitter (BLE)</h1>
+        <p>Connect your gamepad and pair with a HID Receiver via Bluetooth Low Energy.</p>
+        
+        <div>
+            <button id="connect_device">Connect to HID Receiver</button>
+            <button id="disconnect_device" disabled>Disconnect</button>
+        </div>
+        
+        <div id="status" class="status disconnected">Not Connected</div>
+        
+        <p><strong>Instructions:</strong></p>
+        <ul>
+            <li>Connect a gamepad to your computer</li>
+            <li>Click "Connect to HID Receiver" and select your device</li>
+            <li>Keep this window visible for gamepad input to work</li>
+        </ul>
+        
+        <h3>Debug Output</h3>
+        <pre id="output"></pre>
+    </div>
 </body>
+
+</html>
