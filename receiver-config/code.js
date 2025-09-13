@@ -7,6 +7,7 @@ const REPORT_ID_COMMAND = 2;
 const COMMAND_PAIR_NEW_DEVICE = 1;
 const COMMAND_FORGET_ALL_DEVICES = 2;
 const BLUETOOTH_ENABLED_FLAG_MASK = (1 << 0);
+const WIFI_ENABLED_FLAG_MASK = (1 << 1);
 
 let device = null;
 
@@ -82,6 +83,7 @@ async function load_from_device() {
 
         const flags = data.getUint8(pos++);
         document.getElementById("bluetooth_enabled_checkbox").checked = ((flags & BLUETOOTH_ENABLED_FLAG_MASK) != 0);
+        document.getElementById("wifi_enabled_checkbox").checked = ((flags & WIFI_ENABLED_FLAG_MASK) != 0);
     } catch (e) {
         display_error(e);
     }
@@ -118,7 +120,13 @@ async function save_to_device() {
             dataview.setUint8(pos++, isNaN(c) ? 0 : c);
         }
 
-        const flags = document.getElementById("bluetooth_enabled_checkbox").checked ? BLUETOOTH_ENABLED_FLAG_MASK : 0;
+        let flags = 0;
+        if (document.getElementById("bluetooth_enabled_checkbox").checked) {
+            flags |= BLUETOOTH_ENABLED_FLAG_MASK;
+        }
+        if (document.getElementById("wifi_enabled_checkbox").checked) {
+            flags |= WIFI_ENABLED_FLAG_MASK;
+        }
         dataview.setUint8(pos++, flags);
 
         for (let i = 0; i < 12; i++) {

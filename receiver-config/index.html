@@ -49,7 +49,16 @@
 
         <div class="row mt-3">
             <div class="col-4 text-end">
-                <label for="wifi_ssid_input" class="col-form-label">Wifi network name</label>
+                <label for="wifi_enabled_checkbox" class="col-form-label">Enable WiFi</label>
+            </div>
+            <div class="col-auto">
+                <input type="checkbox" id="wifi_enabled_checkbox" class="form-check-input align-middle">
+            </div>
+        </div>
+
+        <div class="row mt-3">
+            <div class="col-4 text-end">
+                <label for="wifi_ssid_input" class="col-form-label">WiFi network name</label>
             </div>
             <div class="col-8">
                 <input type="text" id="wifi_ssid_input" class="form-control">
@@ -58,7 +67,7 @@
 
         <div class="row mt-3">
             <div class="col-4 text-end">
-                <label for="wifi_password_input" class="col-form-label">Wifi password</label>
+                <label for="wifi_password_input" class="col-form-label">WiFi password</label>
             </div>
             <div class="col-8">
                 <input type="text" id="wifi_password_input" placeholder="unchanged if left blank" class="form-control">

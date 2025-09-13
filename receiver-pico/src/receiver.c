@@ -49,6 +49,7 @@
 #define COMMAND_FORGET_ALL_DEVICES 2
 
 #define BLUETOOTH_ENABLED_FLAG_MASK (1 << 0)
+#define WIFI_ENABLED_FLAG_MASK (1 << 1)
 
 typedef struct __attribute__((packed)) {
     uint8_t config_version;
@@ -99,6 +100,7 @@ config_t config = {
     .our_descriptor_number = 2,
     .wifi_ssid = "",
     .wifi_password = "",
+    .flags = BLUETOOTH_ENABLED_FLAG_MASK,  // Bluetooth enabled by default, WiFi disabled
     .reserved = { 0 },
     .crc = 0,
 };
@@ -363,9 +365,13 @@ int main(void) {
     cyw43_arch_init();
 #endif
 #ifdef NETWORK_ENABLED
-    net_init();
+    // Only initialize WiFi if enabled in config
+    if (config.flags & WIFI_ENABLED_FLAG_MASK) {
+        net_init();
+    }
 #endif
 #ifdef BLUETOOTH_ENABLED
+    // Only initialize Bluetooth if enabled in config
     if (config.flags & BLUETOOTH_ENABLED_FLAG_MASK) {
         bt_init();
     }
