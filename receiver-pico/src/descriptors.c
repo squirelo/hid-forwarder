@@ -629,8 +629,8 @@ our_descriptor_t our_descriptors[NOUR_DESCRIPTORS] = {
     {
         .configuration_descriptor = configuration_descriptor2,
         .report_descriptor = our_report_descriptor_horipad,
-        .vid = 0x0F0D,
-        .pid = 0x00C1,
+        .vid = 0x057E,
+        .pid = 0x2009,
     },
     {
         .configuration_descriptor = configuration_descriptor3,
