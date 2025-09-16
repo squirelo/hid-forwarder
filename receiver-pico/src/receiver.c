@@ -354,7 +354,7 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
 int main(void) {
     board_init();
     stdio_init_all();
-    printf("HID Receiver\n");
+    printf("PlayAbility Receiver\n");
     config_init();
     our_descriptor_number = config.our_descriptor_number;
     if (our_descriptor_number >= NOUR_DESCRIPTORS) {

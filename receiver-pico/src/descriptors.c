@@ -654,8 +654,8 @@ our_descriptor_t our_descriptors[NOUR_DESCRIPTORS] = {
 
 char const* string_desc_arr[] = {
     (const char[]){ 0x09, 0x04 },  // 0: is supported language is English (0x0409)
-    "Arasaka",                     // 1: Manufacturer
-    "HID Receiver",                // 2: Product
+    "PlayAbility",                     // 1: Manufacturer
+    "PlayAbility Receiver",                // 2: Product
 };
 
 uint8_t const* tud_descriptor_device_cb(void) {

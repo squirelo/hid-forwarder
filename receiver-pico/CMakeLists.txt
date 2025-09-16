@@ -18,6 +18,8 @@ add_executable(receiver
     src/bt.c
 )
 target_include_directories(receiver PRIVATE src)
+
+
 target_link_libraries(receiver
     pico_stdlib
     tinyusb_device
